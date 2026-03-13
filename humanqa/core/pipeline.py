@@ -14,6 +14,7 @@ from humanqa.core.intent_modeler import IntentModeler
 from humanqa.core.llm import LLMClient
 from humanqa.core.orchestrator import Orchestrator
 from humanqa.core.persona_generator import PersonaGenerator
+from humanqa.core.repo_analyzer import RepoAnalyzer
 from humanqa.core.schemas import RunConfig, RunResult
 from humanqa.lenses.design_lens import DesignLens
 from humanqa.lenses.institutional_lens import InstitutionalLens
@@ -31,15 +32,29 @@ async def run_pipeline(config: RunConfig) -> RunResult:
 
     llm = LLMClient(provider=config.llm_provider, model=config.llm_model)
 
-    # Step 1: Scrape landing page for intent modeling
-    logger.info("Step 1: Scraping target product...")
+    # Step 1a: Analyze repository (if provided)
+    repo_insights = None
+    if config.repo_url:
+        logger.info("Step 1a: Analyzing repository %s ...", config.repo_url)
+        repo_analyzer = RepoAnalyzer(llm)
+        repo_insights = await repo_analyzer.analyze(
+            config.repo_url, config.github_token_env
+        )
+        logger.info(
+            "Repo analysis complete: %s (confidence=%.0f%%)",
+            repo_insights.product_name,
+            repo_insights.repo_confidence * 100,
+        )
+
+    # Step 1b: Scrape landing page for intent modeling
+    logger.info("Step 1b: Scraping target product...")
     web_runner = WebRunner(llm, config.output_dir)
     page_content = await web_runner.scrape_landing_page(config.target_url)
 
     # Step 2: Build Product Intent Model
     logger.info("Step 2: Building product intent model...")
     modeler = IntentModeler(llm)
-    intent = await modeler.build_intent_model(config, page_content)
+    intent = await modeler.build_intent_model(config, page_content, repo_insights)
     logger.info(
         "Product identified as: %s (%s), confidence=%.0f%%",
         intent.product_name, intent.product_type, intent.confidence * 100,

@@ -40,6 +40,8 @@ def main():
 
 @main.command()
 @click.argument("url")
+@click.option("--repo", "-r", default=None, help="GitHub repo URL for product context")
+@click.option("--github-token-env", default="GITHUB_TOKEN", help="Env var name for GitHub token")
 @click.option("--brief", "-b", default=None, help="Product brief / description")
 @click.option("--credentials", "-c", default=None, help="JSON credentials: '{\"email\": \"...\", \"password\": \"...\"}'")
 @click.option("--focus", "-f", default=None, help="Comma-separated focus flows")
@@ -52,6 +54,8 @@ def main():
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def run(
     url: str,
+    repo: str | None,
+    github_token_env: str,
     brief: str | None,
     credentials: str | None,
     focus: str | None,
@@ -78,6 +82,8 @@ def run(
 
     config = RunConfig(
         target_url=url,
+        repo_url=repo,
+        github_token_env=github_token_env,
         credentials=creds,
         brief=brief,
         persona_hints=[p.strip() for p in personas.split(",")] if personas else [],
@@ -89,7 +95,10 @@ def run(
         design_review=not no_design,
     )
 
-    console.print(f"\n[bold]HumanQA[/bold] evaluating: [cyan]{url}[/cyan]\n")
+    console.print(f"\n[bold]HumanQA[/bold] evaluating: [cyan]{url}[/cyan]")
+    if repo:
+        console.print(f"  Repository: [cyan]{repo}[/cyan]")
+    console.print()
 
     from humanqa.core.pipeline import run_pipeline
 
