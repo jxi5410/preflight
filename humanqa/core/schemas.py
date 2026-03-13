@@ -230,6 +230,45 @@ class Issue(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Institutional Checklist
+# ---------------------------------------------------------------------------
+
+class ChecklistResult(BaseModel):
+    """Result of a single institutional checklist verification."""
+    check_name: str
+    status: str = "not_checked"  # pass | fail | not_applicable | not_checked
+    evidence: list[str] = Field(default_factory=list)
+    details: str = ""
+    severity_if_failed: str = "medium"  # Severity to assign if status is "fail"
+
+
+class ProvenanceScore(BaseModel):
+    """Provenance scoring for a product output."""
+    output_name: str
+    score: int = 0  # 0 (no provenance) to 5 (full source trail with timestamps)
+    sources_cited: bool = False
+    sources_specific: bool = False
+    freshness_shown: bool = False
+    evidence: list[str] = Field(default_factory=list)
+    details: str = ""
+
+
+class TrustSignal(BaseModel):
+    """A single trust signal check result."""
+    signal_name: str
+    present: bool | None = None  # None = not checked
+    details: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+
+class TrustScorecard(BaseModel):
+    """Aggregate trust signal inventory."""
+    signals: list[TrustSignal] = Field(default_factory=list)
+    overall_score: float = 0.0  # 0.0 to 1.0
+    summary: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Coverage Map
 # ---------------------------------------------------------------------------
 
