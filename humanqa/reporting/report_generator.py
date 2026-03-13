@@ -13,6 +13,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+import jinja2
+
 from humanqa.core.schemas import Issue, RunResult, Severity
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ class ReportGenerator:
         paths = {}
         paths["markdown"] = self.generate_markdown(result)
         paths["json"] = self.generate_json(result)
+        paths["html"] = self.generate_html(result)
         paths["repair_briefs"] = self.generate_repair_briefs(result)
         return paths
 
@@ -193,6 +196,44 @@ class ReportGenerator:
         json_path.write_text(result.model_dump_json(indent=2))
         logger.info("JSON report written to %s", json_path)
         return str(json_path)
+
+    def generate_html(self, result: RunResult) -> str:
+        """Generate self-contained interactive HTML report."""
+        intent = result.intent_model
+        issues = result.issues
+
+        severity_counts = {}
+        for i in issues:
+            severity_counts[i.severity.value] = severity_counts.get(i.severity.value, 0) + 1
+
+        categories = sorted({i.category.value for i in issues})
+        agents = sorted({i.agent for i in issues if i.agent})
+
+        template_dir = Path(__file__).parent / "templates"
+        env = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(str(template_dir)),
+            autoescape=jinja2.select_autoescape(["html"]),
+        )
+        template = env.get_template("report.html")
+
+        html = template.render(
+            run_id=result.run_id,
+            started_at=result.started_at.strftime("%Y-%m-%d %H:%M UTC"),
+            config=result.config,
+            intent=intent,
+            issues=issues,
+            total_issues=len(issues),
+            severity_counts=severity_counts,
+            categories=categories,
+            agents=agents,
+            scores=result.scores,
+            coverage_count=len(result.coverage.entries),
+        )
+
+        html_path = self.output_dir / "report.html"
+        html_path.write_text(html)
+        logger.info("HTML report written to %s", html_path)
+        return str(html_path)
 
     def generate_repair_briefs(self, result: RunResult) -> str:
         """Generate per-issue repair briefs for coding agents."""
