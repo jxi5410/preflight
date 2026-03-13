@@ -20,11 +20,13 @@ from humanqa.core.schemas import (
     AgentPersona,
     CoverageMap,
     Issue,
+    IssueCategory,
     PageSnapshot,
     Platform,
     ProductIntentModel,
     RunConfig,
     RunResult,
+    Severity,
 )
 from humanqa.runners.web_runner import WebRunner
 from humanqa.runners.mobile_runner import MobileRunner
@@ -56,6 +58,63 @@ DEDUP_PROMPT = """Cluster these issues by semantic similarity. Group duplicates 
 
 Return clusters of duplicate issues. Each cluster should contain the indices of issues
 that describe the same underlying problem. Issues with no duplicates should be omitted."""
+
+COMPARATIVE_SYSTEM_PROMPT = """You are the comparative analysis engine for HumanQA.
+
+After multiple personas have evaluated a product, you compare their findings to identify:
+
+1. **Convergence findings**: Issues noticed by multiple personas. These are high-signal —
+   if 3 of 5 personas stumbled on the same problem, it's likely a real and impactful issue.
+2. **Persona-specific findings**: Issues only one persona type noticed. These are valuable
+   because they reveal blind spots — e.g., only the compliance reviewer noticed a missing
+   audit trail, or only the novice user got confused by the onboarding.
+
+For convergence findings:
+- Summarize what the personas agreed on
+- Note how many personas encountered it
+- Recommend severity weighting: more personas = higher severity
+
+For persona-specific findings:
+- Explain why only this persona type would notice
+- Assess whether this is a niche concern or a blind spot in other personas
+
+Respond with JSON:
+{
+  "convergence_findings": [
+    {
+      "title": "...",
+      "description": "...",
+      "personas_affected": ["persona1", "persona2"],
+      "convergence_count": 3,
+      "recommended_severity": "high",
+      "evidence_summary": "..."
+    }
+  ],
+  "persona_specific_findings": [
+    {
+      "title": "...",
+      "description": "...",
+      "persona": "...",
+      "why_only_this_persona": "...",
+      "recommended_severity": "medium"
+    }
+  ],
+  "cross_persona_summary": "2-3 sentence overall assessment"
+}"""
+
+COMPARATIVE_PROMPT = """Compare findings across personas. Identify convergence and unique insights.
+
+## Agents who participated
+{agent_descriptions}
+
+## All findings (after deduplication)
+{findings_by_agent}
+
+## Coverage summary
+{coverage_summary}
+
+Analyze cross-persona patterns. What did multiple personas agree on? What did only specific
+persona types catch?"""
 
 JOURNEY_ASSIGNMENT_PROMPT = """You are the test planner for HumanQA.
 
@@ -155,7 +214,11 @@ class Orchestrator:
         # Step 5: Deduplicate
         deduped = self._deduplicate_issues(all_issues)
 
-        # Step 6: Rank by severity and confidence
+        # Step 6: Comparative evaluation across personas
+        comparative_issues = self._comparative_evaluation(deduped, agents, coverage)
+        deduped.extend(comparative_issues)
+
+        # Step 7: Rank by severity and confidence
         ranked = sorted(
             deduped,
             key=lambda i: (
@@ -212,6 +275,118 @@ class Orchestrator:
                     intent.critical_journeys[(start + 1) % len(intent.critical_journeys)],
                 ]
             return result
+
+    def _comparative_evaluation(
+        self,
+        issues: list[Issue],
+        agents: list[AgentPersona],
+        coverage: CoverageMap,
+    ) -> list[Issue]:
+        """Compare findings across personas to generate convergence and persona-specific insights."""
+        if len(agents) < 2 or not issues:
+            return []
+
+        # Group issues by agent
+        agent_map = {a.id: a for a in agents}
+        findings_by_agent: dict[str, list[Issue]] = {}
+        for issue in issues:
+            findings_by_agent.setdefault(issue.agent, []).append(issue)
+
+        agent_descs = "\n".join(
+            f"- {a.id}: {a.name} ({a.persona_type}, expertise={a.expertise_level}, "
+            f"patience={a.patience_level})"
+            for a in agents
+        )
+
+        findings_text_parts = []
+        for agent_id, agent_issues in findings_by_agent.items():
+            agent_name = agent_map.get(agent_id, AgentPersona(
+                name=agent_id, role="", persona_type="",
+            )).name
+            lines = [f"\n### {agent_name} ({agent_id})"]
+            for iss in agent_issues[:15]:  # Cap per agent for token budget
+                lines.append(
+                    f'  - [{iss.severity.value}] "{iss.title}" '
+                    f"(category={iss.category.value}, confidence={iss.confidence})"
+                )
+            findings_text_parts.append("\n".join(lines))
+
+        coverage_summary = f"{len(coverage.entries)} pages visited, {len(coverage.visited_urls())} unique URLs"
+
+        prompt = COMPARATIVE_PROMPT.format(
+            agent_descriptions=agent_descs,
+            findings_by_agent="\n".join(findings_text_parts),
+            coverage_summary=coverage_summary,
+        )
+
+        try:
+            data = self.llm.complete_json(prompt, system=COMPARATIVE_SYSTEM_PROMPT)
+        except Exception as e:
+            logger.warning("Comparative evaluation failed: %s", e)
+            return []
+
+        comparative_issues: list[Issue] = []
+
+        # Process convergence findings
+        for finding in data.get("convergence_findings", []):
+            count = finding.get("convergence_count", 2)
+            sev_str = finding.get("recommended_severity", "medium")
+            try:
+                severity = Severity(sev_str)
+            except ValueError:
+                severity = Severity.medium
+
+            personas_affected = finding.get("personas_affected", [])
+            comparative_issues.append(Issue(
+                title=f"[Convergence: {count} personas] {finding.get('title', 'Cross-persona finding')}",
+                severity=severity,
+                confidence=min(0.5 + count * 0.1, 1.0),  # More personas = higher confidence
+                platform=Platform.web,
+                category=IssueCategory.ux,
+                agent="comparative_analysis",
+                user_impact=finding.get("description", ""),
+                observed_facts=[
+                    f"Found by {count} of {len(agents)} personas",
+                    f"Personas affected: {', '.join(personas_affected)}",
+                    finding.get("evidence_summary", ""),
+                ],
+                inferred_judgment=f"Cross-persona convergence suggests this is a significant issue",
+                likely_product_area="Cross-cutting",
+                repair_brief=finding.get("description", ""),
+            ))
+
+        # Process persona-specific findings
+        for finding in data.get("persona_specific_findings", []):
+            sev_str = finding.get("recommended_severity", "low")
+            try:
+                severity = Severity(sev_str)
+            except ValueError:
+                severity = Severity.low
+
+            comparative_issues.append(Issue(
+                title=f"[{finding.get('persona', 'Specialist')} only] {finding.get('title', 'Persona-specific finding')}",
+                severity=severity,
+                confidence=0.7,
+                platform=Platform.web,
+                category=IssueCategory.ux,
+                agent="comparative_analysis",
+                user_impact=finding.get("description", ""),
+                observed_facts=[
+                    f"Only detected by persona: {finding.get('persona', 'unknown')}",
+                    f"Reason: {finding.get('why_only_this_persona', '')}",
+                ],
+                inferred_judgment=finding.get("why_only_this_persona", ""),
+                likely_product_area="Persona-specific",
+                repair_brief=finding.get("description", ""),
+            ))
+
+        logger.info(
+            "Comparative evaluation: %d convergence, %d persona-specific findings",
+            len(data.get("convergence_findings", [])),
+            len(data.get("persona_specific_findings", [])),
+        )
+
+        return comparative_issues
 
     def add_snapshots(self, snapshots: list[PageSnapshot]) -> None:
         """Register snapshots collected during evaluation for performance analysis."""
