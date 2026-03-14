@@ -20,6 +20,7 @@ from humanqa.core.schemas import RunConfig, RunResult
 from humanqa.lenses.auth_lens import AuthLens
 from humanqa.lenses.design_lens import DesignLens
 from humanqa.lenses.institutional_lens import InstitutionalLens
+from humanqa.lenses.responsive_lens import ResponsiveLens
 from humanqa.lenses.trust_lens import TrustLens
 from humanqa.reporting.handoff import HandoffGenerator
 from humanqa.reporting.report_generator import ReportGenerator
@@ -112,6 +113,17 @@ async def run_pipeline(config: RunConfig) -> RunResult:
     progress.complete_step(
         "trust",
         f"Trust score: {trust_scorecard.overall_score:.0%}, {len(trust_issues)} issues"
+    )
+
+    # Responsive/mobile layout evaluation
+    progress.start_step("responsive")
+    responsive_lens = ResponsiveLens(llm)
+    responsive_issues, responsive_score = await responsive_lens.review(result)
+    result.issues.extend(responsive_issues)
+    result.scores["responsive_score"] = responsive_score
+    progress.complete_step(
+        "responsive",
+        f"{len(responsive_issues)} responsive issues, score={responsive_score:.0%}"
     )
 
     # Auth/login flow evaluation (no credentials needed)

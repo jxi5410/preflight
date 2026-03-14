@@ -89,7 +89,7 @@ For each issue found, provide:
 - title: Clear issue title
 - severity: critical | high | medium | low | info
 - confidence: 0.0-1.0
-- category: functional | ux | ui | performance | trust | design | accessibility
+- category: functional | ux | ui | performance | trust | design | accessibility | auth | responsive
 - user_impact: How this affects a real user
 - observed_facts: What you literally see/measure — MUST include evidence anchor (list)
 - inferred_judgment: What you conclude from the evidence
