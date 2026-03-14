@@ -17,6 +17,7 @@ from humanqa.core.persona_generator import PersonaGenerator
 from humanqa.core.progress import PipelineProgress
 from humanqa.core.repo_analyzer import RepoAnalyzer
 from humanqa.core.schemas import RunConfig, RunResult
+from humanqa.lenses.auth_lens import AuthLens
 from humanqa.lenses.design_lens import DesignLens
 from humanqa.lenses.institutional_lens import InstitutionalLens
 from humanqa.lenses.trust_lens import TrustLens
@@ -112,6 +113,13 @@ async def run_pipeline(config: RunConfig) -> RunResult:
         "trust",
         f"Trust score: {trust_scorecard.overall_score:.0%}, {len(trust_issues)} issues"
     )
+
+    # Auth/login flow evaluation (no credentials needed)
+    progress.start_step("auth")
+    auth_lens = AuthLens(llm)
+    auth_issues = await auth_lens.review(result)
+    result.issues.extend(auth_issues)
+    progress.complete_step("auth", f"{len(auth_issues)} auth/login issues")
 
     if inst_lens.should_run(intent, config.institutional_review):
         progress.start_step("institutional")

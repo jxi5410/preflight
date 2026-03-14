@@ -41,6 +41,8 @@ class IssueCategory(str, Enum):
     design = "design"
     accessibility = "accessibility"
     copy = "copy"
+    auth = "auth"  # Login/auth flow issues
+    responsive = "responsive"  # Mobile responsiveness issues
 
 
 class InstitutionalRelevance(str, Enum):
