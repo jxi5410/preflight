@@ -19,6 +19,7 @@ from humanqa.core.schemas import RunConfig, RunResult
 from humanqa.lenses.design_lens import DesignLens
 from humanqa.lenses.institutional_lens import InstitutionalLens
 from humanqa.lenses.trust_lens import TrustLens
+from humanqa.reporting.handoff import HandoffGenerator
 from humanqa.reporting.report_generator import ReportGenerator
 from humanqa.runners.web_runner import WebRunner
 
@@ -118,6 +119,12 @@ async def run_pipeline(config: RunConfig) -> RunResult:
     reporter = ReportGenerator(config.output_dir)
     paths = reporter.generate_all(result)
     logger.info("Reports generated: %s", paths)
+
+    # Step 7: Generate developer handoff
+    logger.info("Step 7: Generating developer handoff...")
+    handoff_gen = HandoffGenerator(config.output_dir)
+    handoff_paths = handoff_gen.generate_all(result, repo_insights)
+    logger.info("Handoff generated: %s", handoff_paths)
 
     # Summary
     logger.info("=" * 60)
