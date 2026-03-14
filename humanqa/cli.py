@@ -148,6 +148,8 @@ def run(
     console.print(f"    report.html — Interactive HTML report")
     console.print(f"    report.json — Machine-readable export")
     console.print(f"    repair_briefs/ — Coding agent handoffs")
+    console.print(f"    HANDOFF.md — Developer handoff document")
+    console.print(f"    handoff.json — Machine-readable handoff")
 
     # Webhook
     if webhook:
@@ -320,6 +322,54 @@ def export_issues(repo: str, run_dir: str, min_severity: str, dry_run: bool, ver
             console.print(f"  [dim]Would create:[/dim] {r['title']}")
         elif r.get("status") == "error":
             console.print(f"  [red]Error:[/red] {r['title']}: {r.get('error', '')}")
+
+
+@main.command()
+@click.argument("run_dir")
+@click.option("--repo", "-r", default=None, help="GitHub repo URL for file mapping")
+@click.option("--github-token-env", default="GITHUB_TOKEN", help="Env var name for GitHub token")
+@click.option("--output", "-o", default=None, help="Output directory (defaults to run_dir)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
+def handoff(run_dir: str, repo: str | None, github_token_env: str, output: str | None, verbose: bool):
+    """Generate a developer handoff from a completed run."""
+    setup_logging(verbose)
+
+    from humanqa.reporting.comparison import load_run_result
+    from humanqa.reporting.handoff import HandoffGenerator
+
+    try:
+        result = load_run_result(run_dir)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+
+    # Optionally analyze repo for file mapping
+    repo_insights = None
+    if repo:
+        from humanqa.core.llm import LLMClient
+        from humanqa.core.repo_analyzer import RepoAnalyzer
+
+        console.print(f"  Analyzing repo for file mapping: [cyan]{repo}[/cyan]")
+        llm = LLMClient(
+            provider=result.config.llm_provider,
+            model=result.config.llm_model,
+        )
+        analyzer = RepoAnalyzer(llm)
+        repo_insights = asyncio.run(
+            analyzer.analyze(repo, github_token_env)
+        )
+
+    out_dir = output or run_dir
+    generator = HandoffGenerator(out_dir)
+    handoff_obj = generator.generate(result, repo_insights)
+    paths = generator.generate_all(result, repo_insights)
+
+    console.print(f"\n[bold green]Handoff generated![/bold green]")
+    console.print(f"  Tasks: [bold]{len(handoff_obj.tasks)}[/bold]")
+    console.print(f"  Feature gaps: [bold]{len(handoff_obj.feature_gaps)}[/bold]")
+    console.print(f"\n  Output:")
+    for name, path in paths.items():
+        console.print(f"    {path}")
 
 
 if __name__ == "__main__":
