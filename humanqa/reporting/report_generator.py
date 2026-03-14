@@ -15,6 +15,7 @@ from pathlib import Path
 
 import jinja2
 
+from humanqa.core.performance import score_explanation
 from humanqa.core.schemas import Issue, RunResult, Severity
 
 logger = logging.getLogger(__name__)
@@ -209,6 +210,11 @@ class ReportGenerator:
         categories = sorted({i.category.value for i in issues})
         agents = sorted({i.agent for i in issues if i.agent})
 
+        # Generate performance budget explanation
+        perf_explanation = ""
+        if intent.product_type:
+            perf_explanation = score_explanation(intent.product_type).split("\n")[1]  # Just the explanation line
+
         template_dir = Path(__file__).parent / "templates"
         env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(str(template_dir)),
@@ -228,6 +234,8 @@ class ReportGenerator:
             agents=agents,
             scores=result.scores,
             coverage_count=len(result.coverage.entries),
+            issue_groups=result.issue_groups,
+            perf_explanation=perf_explanation,
         )
 
         html_path = self.output_dir / "report.html"

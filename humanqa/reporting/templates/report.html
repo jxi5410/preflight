@@ -8,6 +8,7 @@
 :root {
   --bg: #0f1117;
   --surface: #1a1d27;
+  --surface-hover: #22253a;
   --border: #2a2d3a;
   --text: #e4e4e7;
   --muted: #8b8d97;
@@ -35,7 +36,7 @@ header {
 header h1 { font-size: 1.5rem; font-weight: 600; }
 header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
 
-/* Summary cards */
+/* Summary cards — clickable to filter */
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -48,7 +49,11 @@ header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
   border-radius: 8px;
   padding: 1rem;
   text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.1s;
 }
+.card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.card.active { border-color: var(--accent); border-width: 2px; }
 .card .count { font-size: 2rem; font-weight: 700; }
 .card .label { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); }
 .card.critical .count { color: var(--critical); }
@@ -57,6 +62,19 @@ header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
 .card.low .count { color: var(--low); }
 .card.info .count { color: var(--info); }
 .card.total .count { color: var(--accent); }
+
+/* Search bar */
+.search-bar {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+.search-bar:focus { outline: none; border-color: var(--accent); }
 
 /* Filters */
 .filters {
@@ -81,7 +99,9 @@ header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
   border-radius: 8px;
   margin-bottom: 1rem;
   overflow: hidden;
+  transition: border-color 0.2s;
 }
+.issue:hover { border-color: var(--accent); }
 .issue-header {
   display: flex;
   align-items: center;
@@ -90,7 +110,7 @@ header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
   cursor: pointer;
   user-select: none;
 }
-.issue-header:hover { background: rgba(255,255,255,0.03); }
+.issue-header:hover { background: var(--surface-hover); }
 .sev-badge {
   font-size: 0.7rem;
   font-weight: 600;
@@ -128,14 +148,41 @@ header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
   font-size: 0.875rem;
 }
 
-/* Screenshots */
-.screenshot-thumb {
-  max-width: 200px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  cursor: pointer;
-  margin: 0.25rem;
+/* Inline screenshot gallery */
+.screenshot-gallery {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
 }
+.screenshot-card {
+  position: relative;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.screenshot-card:hover { border-color: var(--accent); }
+.screenshot-card img {
+  display: block;
+  max-width: 240px;
+  max-height: 160px;
+  object-fit: cover;
+}
+.screenshot-caption {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Lightbox */
 .lightbox {
   display: none;
   position: fixed;
@@ -144,9 +191,17 @@ header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
   z-index: 1000;
   justify-content: center;
   align-items: center;
+  flex-direction: column;
 }
 .lightbox.active { display: flex; }
-.lightbox img { max-width: 95vw; max-height: 95vh; border-radius: 8px; }
+.lightbox img { max-width: 95vw; max-height: 85vh; border-radius: 8px; }
+.lightbox-caption {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 0.75rem;
+  text-align: center;
+  max-width: 80vw;
+}
 .lightbox-close {
   position: fixed;
   top: 1rem;
@@ -172,6 +227,32 @@ header .meta { color: var(--muted); font-size: 0.875rem; margin-top: 0.5rem; }
 }
 .score-item .score-label { font-size: 0.8rem; color: var(--muted); }
 .score-item .score-value { font-size: 1.25rem; font-weight: 600; margin-top: 0.25rem; }
+.score-item .score-explanation { font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; line-height: 1.4; }
+
+/* Issue groups */
+.issue-groups {
+  margin-bottom: 2rem;
+}
+.group-chip {
+  display: inline-block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 0.3rem 0.75rem;
+  margin: 0.25rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.group-chip:hover { border-color: var(--accent); }
+.group-chip .group-count {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  margin-left: 0.3rem;
+}
 
 footer {
   border-top: 1px solid var(--border);
@@ -194,49 +275,70 @@ footer a { color: var(--accent); text-decoration: none; }
     </div>
   </header>
 
-  <!-- Severity summary -->
+  <!-- Severity summary — clickable cards -->
   <div class="summary-grid">
-    <div class="card total">
+    <div class="card total" onclick="filterBySeverity('all')" id="card-total">
       <div class="count">{{ total_issues }}</div>
       <div class="label">Total Issues</div>
     </div>
     {% for sev in ['critical', 'high', 'medium', 'low', 'info'] %}
-    <div class="card {{ sev }}">
+    <div class="card {{ sev }}" onclick="filterBySeverity('{{ sev }}')" id="card-{{ sev }}">
       <div class="count">{{ severity_counts.get(sev, 0) }}</div>
       <div class="label">{{ sev }}</div>
     </div>
     {% endfor %}
   </div>
 
-  <!-- Scores -->
+  <!-- Scores with explanations -->
   {% if scores %}
   <div class="scores">
     {% if scores.get('trust_score') is not none %}
     <div class="score-item">
       <div class="score-label">Trust Score</div>
       <div class="score-value">{{ "%.0f"|format(scores.trust_score * 100) }}%</div>
+      <div class="score-explanation">Measures privacy, security, and transparency signals detected on the product surface.</div>
     </div>
     {% endif %}
     {% if scores.get('institutional_readiness_label') %}
     <div class="score-item">
       <div class="score-label">Institutional Readiness</div>
       <div class="score-value">{{ scores.institutional_readiness_label }}</div>
+      <div class="score-explanation">Governance maturity: audit trails, provenance, role controls, confirmation dialogs.</div>
     </div>
     {% endif %}
     {% if scores.get('provenance_avg_score') is not none %}
     <div class="score-item">
       <div class="score-label">Provenance Score</div>
       <div class="score-value">{{ "%.1f"|format(scores.provenance_avg_score) }}/5</div>
+      <div class="score-explanation">How well the product shows where data comes from, how fresh it is, and what sources it cites.</div>
     </div>
     {% endif %}
     {% if scores.get('perf_fail_count') is not none %}
     <div class="score-item">
       <div class="score-label">Performance Budget</div>
       <div class="score-value">{{ scores.get('perf_pass_count', 0)|int }} pass / {{ scores.get('perf_fail_count', 0)|int }} fail</div>
+      {% if perf_explanation %}
+      <div class="score-explanation">{{ perf_explanation }}</div>
+      {% endif %}
     </div>
     {% endif %}
   </div>
   {% endif %}
+
+  <!-- Issue groups -->
+  {% if issue_groups %}
+  <div class="issue-groups">
+    <h3 style="font-size:0.9rem;color:var(--muted);margin-bottom:0.5rem;">ISSUE CLUSTERS</h3>
+    {% for group in issue_groups %}
+    <span class="group-chip" onclick="filterByGroup('{{ group.id }}')" title="{{ group.description }}">
+      {{ group.title }}<span class="group-count">{{ group.issue_count }}</span>
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Search -->
+  <input type="text" class="search-bar" id="search-bar" placeholder="Search issues..." oninput="filterIssues()">
 
   <!-- Filters -->
   <div class="filters">
@@ -268,7 +370,10 @@ footer a { color: var(--accent); text-decoration: none; }
     <div class="issue"
          data-severity="{{ issue.severity.value }}"
          data-category="{{ issue.category.value }}"
-         data-agent="{{ issue.agent }}">
+         data-agent="{{ issue.agent }}"
+         data-group="{{ issue.group_id }}"
+         data-title="{{ issue.title|lower }}"
+         id="issue-{{ issue.id }}">
       <div class="issue-header" onclick="this.parentElement.classList.toggle('open')">
         <span class="sev-badge sev-{{ issue.severity.value }}">{{ issue.severity.value }}</span>
         <span class="issue-title">{{ issue.title }}</span>
@@ -304,11 +409,27 @@ footer a { color: var(--accent); text-decoration: none; }
         </ol>
         {% endif %}
 
-        {% if issue.evidence.screenshots %}
+        {% if issue.evidence.screenshot_evidence %}
         <h4>Screenshots</h4>
-        {% for s in issue.evidence.screenshots %}
-        <img class="screenshot-thumb" src="{{ s }}" alt="{{ s }}" onclick="openLightbox(this.src)">
-        {% endfor %}
+        <div class="screenshot-gallery">
+          {% for se in issue.evidence.screenshot_evidence %}
+          <div class="screenshot-card" onclick="openLightbox('{{ se.path }}', '{{ se.caption }}')">
+            <img src="{{ se.path }}" alt="{{ se.caption or se.path }}" loading="lazy">
+            {% if se.caption %}
+            <div class="screenshot-caption">{{ se.caption }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% elif issue.evidence.screenshots %}
+        <h4>Screenshots</h4>
+        <div class="screenshot-gallery">
+          {% for s in issue.evidence.screenshots %}
+          <div class="screenshot-card" onclick="openLightbox('{{ s }}', '')">
+            <img src="{{ s }}" alt="{{ s }}" loading="lazy">
+          </div>
+          {% endfor %}
+        </div>
         {% endif %}
 
         {% if issue.repair_brief %}
@@ -319,6 +440,7 @@ footer a { color: var(--accent); text-decoration: none; }
 
         <p style="margin-top:0.75rem;color:var(--muted);font-size:0.8rem">
           ID: {{ issue.id }} | Confidence: {{ "%.0f"|format(issue.confidence * 100) }}% | Platform: {{ issue.platform.value }}
+          {% if issue.group_id %} | Group: {{ issue.group_id }}{% endif %}
         </p>
       </div>
     </div>
@@ -336,6 +458,7 @@ footer a { color: var(--accent); text-decoration: none; }
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
   <span class="lightbox-close">&times;</span>
   <img id="lightbox-img" src="" alt="Screenshot">
+  <div class="lightbox-caption" id="lightbox-caption"></div>
 </div>
 
 <script>
@@ -343,16 +466,38 @@ function filterIssues() {
   const sev = document.getElementById('filter-severity').value;
   const cat = document.getElementById('filter-category').value;
   const agent = document.getElementById('filter-agent').value;
+  const search = document.getElementById('search-bar').value.toLowerCase();
   document.querySelectorAll('.issue').forEach(el => {
-    const show =
-      (sev === 'all' || el.dataset.severity === sev) &&
-      (cat === 'all' || el.dataset.category === cat) &&
-      (agent === 'all' || el.dataset.agent === agent);
-    el.style.display = show ? '' : 'none';
+    const matchSev = sev === 'all' || el.dataset.severity === sev;
+    const matchCat = cat === 'all' || el.dataset.category === cat;
+    const matchAgent = agent === 'all' || el.dataset.agent === agent;
+    const matchSearch = !search || el.dataset.title.includes(search) || el.textContent.toLowerCase().includes(search);
+    el.style.display = (matchSev && matchCat && matchAgent && matchSearch) ? '' : 'none';
   });
 }
-function openLightbox(src) {
+function filterBySeverity(sev) {
+  document.getElementById('filter-severity').value = sev;
+  // Update active card state
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+  const cardId = sev === 'all' ? 'card-total' : 'card-' + sev;
+  const card = document.getElementById(cardId);
+  if (card) card.classList.add('active');
+  filterIssues();
+}
+function filterByGroup(groupId) {
+  // Reset other filters
+  document.getElementById('filter-severity').value = 'all';
+  document.getElementById('filter-category').value = 'all';
+  document.getElementById('filter-agent').value = 'all';
+  document.getElementById('search-bar').value = '';
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.issue').forEach(el => {
+    el.style.display = el.dataset.group === groupId ? '' : 'none';
+  });
+}
+function openLightbox(src, caption) {
   document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox-caption').textContent = caption || '';
   document.getElementById('lightbox').classList.add('active');
 }
 function closeLightbox() {
