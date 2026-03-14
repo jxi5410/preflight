@@ -72,6 +72,9 @@ def main():
 @click.option("--no-design", is_flag=True, help="Skip design review")
 @click.option("--fail-on", default=None, type=click.Choice(["critical", "high", "medium", "low"]),
               help="Exit with code 1 if issues at this severity or above are found")
+@click.option("--handoff", "handoff_format", default=None,
+              type=click.Choice(["claude-code", "codex", "cursor", "generic"]),
+              help="Handoff format: claude-code | codex | cursor | generic")
 @click.option("--webhook", default=None, help="Webhook URL for posting summary (e.g. Slack)")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def run(
@@ -88,6 +91,7 @@ def run(
     institutional: str,
     no_design: bool,
     fail_on: str | None,
+    handoff_format: str | None,
     webhook: str | None,
     verbose: bool,
 ):
@@ -326,12 +330,22 @@ def export_issues(repo: str, run_dir: str, min_severity: str, dry_run: bool, ver
 
 @main.command()
 @click.argument("run_dir")
+@click.option("--format", "fmt", default="generic",
+              type=click.Choice(["claude-code", "codex", "cursor", "generic"]),
+              help="Handoff format: claude-code | codex | cursor | generic")
 @click.option("--repo", "-r", default=None, help="GitHub repo URL for file mapping")
 @click.option("--github-token-env", default="GITHUB_TOKEN", help="Env var name for GitHub token")
 @click.option("--output", "-o", default=None, help="Output directory (defaults to run_dir)")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
-def handoff(run_dir: str, repo: str | None, github_token_env: str, output: str | None, verbose: bool):
-    """Generate a developer handoff from a completed run."""
+def handoff(run_dir: str, fmt: str, repo: str | None, github_token_env: str, output: str | None, verbose: bool):
+    """Generate a developer handoff from a completed run.
+
+    Regenerate handoff from an existing run in a specific format:
+
+        humanqa handoff ./artifacts --format claude-code
+
+        humanqa handoff ./artifacts --format codex
+    """
     setup_logging(verbose)
 
     from humanqa.reporting.comparison import load_run_result
@@ -362,11 +376,12 @@ def handoff(run_dir: str, repo: str | None, github_token_env: str, output: str |
     out_dir = output or run_dir
     generator = HandoffGenerator(out_dir)
     handoff_obj = generator.generate(result, repo_insights)
-    paths = generator.generate_all(result, repo_insights)
+    paths = generator.generate_all(result, repo_insights, handoff_format=fmt)
 
-    console.print(f"\n[bold green]Handoff generated![/bold green]")
+    console.print(f"\n[bold green]Handoff generated![/bold green] (format: {fmt})")
     console.print(f"  Tasks: [bold]{len(handoff_obj.tasks)}[/bold]")
     console.print(f"  Feature gaps: [bold]{len(handoff_obj.feature_gaps)}[/bold]")
+    console.print(f"  Estimated scope: {handoff_obj.total_estimated_hours}")
     console.print(f"\n  Output:")
     for name, path in paths.items():
         console.print(f"    {path}")
