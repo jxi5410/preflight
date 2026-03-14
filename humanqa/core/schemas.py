@@ -299,6 +299,41 @@ class CoverageMap(BaseModel):
 # Run Result
 # ---------------------------------------------------------------------------
 
+class HandoffTask(BaseModel):
+    """A task derived from an issue for developer handoff."""
+    issue_id: str
+    title: str
+    severity: Severity = Severity.medium
+    category: IssueCategory = IssueCategory.functional
+    likely_files: list[str] = Field(default_factory=list)
+    repair_brief: str = ""
+    repro_steps: list[str] = Field(default_factory=list)
+    expected: str = ""
+    actual: str = ""
+    effort_estimate: str = ""  # small | medium | large
+
+
+class FeatureGap(BaseModel):
+    """A gap between claimed features and observed behavior."""
+    feature_name: str
+    source: str = ""  # where the feature was claimed (e.g. README, docs)
+    status: str = ""  # missing | broken | partial
+    details: str = ""
+    related_issues: list[str] = Field(default_factory=list)
+
+
+class Handoff(BaseModel):
+    """Complete developer handoff document."""
+    run_id: str = ""
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    product_name: str = ""
+    target_url: str = ""
+    summary: str = ""
+    tasks: list[HandoffTask] = Field(default_factory=list)
+    feature_gaps: list[FeatureGap] = Field(default_factory=list)
+    coverage_summary: dict[str, Any] = Field(default_factory=dict)
+
+
 class RunResult(BaseModel):
     """Complete output of a single evaluation run."""
     run_id: str = Field(default_factory=lambda: f"run-{uuid.uuid4().hex[:8]}")
