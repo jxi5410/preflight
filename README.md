@@ -16,29 +16,37 @@ External-experience AI QA system. Evaluates shipped products like real users wou
 ## Quick Start
 
 ```bash
-# Install
-pip install -e ".[dev]"
+# Install from PyPI
+pip install preflight-qa
 playwright install chromium
 
-# Quick check (~30s) — fast single-pass evaluation
+# Quick check (~1-2 min) — fast single-pass evaluation
 preflight check https://your-product.com
-preflight check https://your-product.com --focus "login flow" --json-output
 
-# Run against a URL
-preflight run https://your-product.com
-
-# With repo analysis
+# Full evaluation with repo context
 preflight run https://your-product.com --repo https://github.com/user/repo
 
-# With options
+# Interactive mode (prompts for everything)
+preflight
+```
+
+You'll need a Google API key (free from aistudio.google.com):
+```bash
+export GOOGLE_API_KEY=your-key-here
+```
+
+### More Examples
+
+```bash
+# Quick check with focus
+preflight check https://your-product.com --focus "login flow"
+
+# Full run with options
 preflight run https://your-product.com \
   --brief "B2B SaaS dashboard for financial analytics" \
   --credentials '{"email": "test@example.com", "password": "test123"}' \
   --focus "onboarding,search,export" \
   --output ./my-report
-
-# Interactive mode (prompts for URL and repo)
-preflight
 
 # Generate handoff from existing run
 preflight handoff ./artifacts --format claude-code
