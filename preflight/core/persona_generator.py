@@ -108,6 +108,15 @@ class PersonaGenerator:
                 item["device_preference"] = dp_map.get(dp, Platform.web)
                 personas.append(AgentPersona(**item))
 
+            # Guarantee at least one mobile_web persona
+            has_mobile = any(
+                p.device_preference == Platform.mobile_web for p in personas
+            )
+            if not has_mobile and personas:
+                # Promote the last persona to mobile_web
+                personas[-1].device_preference = Platform.mobile_web
+                logger.info("Promoted persona '%s' to mobile_web to ensure mobile coverage", personas[-1].name)
+
             logger.info("Generated %d personas", len(personas))
             return personas
 
