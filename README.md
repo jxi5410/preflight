@@ -30,10 +30,51 @@ preflight run https://your-product.com --repo https://github.com/user/repo
 preflight
 ```
 
-You'll need a Google API key (free from aistudio.google.com):
+## Supported LLM Providers
+
+Preflight works with any major LLM provider. Pick the one you already use — you just need an API key.
+
+### Quick Setup
+
 ```bash
-export GOOGLE_API_KEY=your-key-here
+# Google Gemini (default — cheapest, recommended)
+export GOOGLE_API_KEY=your-key    # Free from aistudio.google.com
+
+# OpenAI
+export OPENAI_API_KEY=sk-...      # From platform.openai.com
+
+# Anthropic Claude
+export ANTHROPIC_API_KEY=sk-...   # From console.anthropic.com
 ```
+
+Then choose your tier when running:
+
+```bash
+preflight check https://myapp.com                    # Uses default (balanced/Gemini)
+preflight check https://myapp.com --tier balanced     # Gemini 3 Flash + 3.1 Pro
+preflight check https://myapp.com --tier budget       # Gemini 2.5 Flash + 3 Flash
+preflight check https://myapp.com --tier openai       # GPT-4.1 + GPT-5.4
+preflight check https://myapp.com --tier premium      # Claude Sonnet + Opus
+```
+
+Or specify models directly:
+
+```bash
+preflight run https://myapp.com --provider google --model gemini-3.1-pro-preview
+preflight run https://myapp.com --provider openai --model gpt-5.4
+preflight run https://myapp.com --provider anthropic --model claude-sonnet-4-20250514
+```
+
+### Tier Comparison
+
+| Tier | Provider | Fast Model | Smart Model | Cost/Run | Best For |
+|------|----------|-----------|-------------|----------|----------|
+| **balanced** (default) | Google | Gemini 3 Flash | Gemini 3.1 Pro | ~$0.50-0.80 | Daily use, most users |
+| **budget** | Google | Gemini 2.5 Flash | Gemini 3 Flash | ~$0.20-0.40 | High volume, cost-sensitive |
+| **openai** | OpenAI | GPT-4.1 | GPT-5.4 | ~$2-4 | OpenAI ecosystem users |
+| **premium** | Anthropic | Claude Sonnet 4.6 | Claude Opus 4.6 | ~$3-5 | Best quality, complex products |
+
+Preflight uses a **tiered model approach** — cheap fast models handle per-page evaluations and screenshot analysis, while smarter models handle product understanding, persona generation, and report synthesis. This keeps costs low without sacrificing judgment quality.
 
 ### More Examples
 
@@ -83,9 +124,10 @@ options:
   design_review: true
 
 llm:
-  provider: anthropic  # anthropic | openai
-  model: claude-sonnet-4-20250514
-  api_key_env: ANTHROPIC_API_KEY
+  tier: balanced  # balanced | budget | openai | premium
+  # Or specify directly:
+  # provider: google    # google | openai | anthropic
+  # model: gemini-3.1-pro-preview
 
 output:
   dir: ./reports
@@ -99,9 +141,14 @@ output:
 ## Environment Variables
 
 ```bash
-ANTHROPIC_API_KEY=sk-...    # Required (or OPENAI_API_KEY)
-GITHUB_TOKEN=ghp_...        # Optional, for repo analysis and issue export
-HUMANQA_OUTPUT_DIR=./reports # Optional, default: ./artifacts
+# LLM Provider (set one based on your chosen tier)
+GOOGLE_API_KEY=...          # For balanced/budget tiers (free from aistudio.google.com)
+OPENAI_API_KEY=sk-...       # For openai tier
+ANTHROPIC_API_KEY=sk-...    # For premium tier
+
+# Optional
+GITHUB_TOKEN=ghp_...        # For private repo analysis and GitHub issue export
+PREFLIGHT_OUTPUT_DIR=./reports  # Default: ./artifacts
 ```
 
 ## MCP Server (Claude Code / AI Tool Integration)
@@ -118,12 +165,14 @@ Add to your Claude Code MCP configuration (`~/.claude/claude_desktop_config.json
     "preflight": {
       "command": "preflight-mcp",
       "env": {
-        "GEMINI_API_KEY": "your-gemini-key"
+        "GOOGLE_API_KEY": "your-key"
       }
     }
   }
 }
 ```
+
+Use `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` instead if you prefer those providers.
 
 ### Available Tools
 

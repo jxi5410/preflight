@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "preflight-qa"
-version = "0.1.0"
+version = "0.1.1"
 description = "Your AI QA crew — evaluates products like real users would, right from your coding session"
 readme = "README.md"
 license = {text = "MIT"}
