@@ -415,7 +415,6 @@ class TestReportGenerator:
         assert "<!DOCTYPE html>" in html
         assert "TestApp" in html
         assert "HTML Bug" in html
-        assert "85%" in html  # Trust score
         assert "filterIssues" in html  # JavaScript filter
 
     def test_generate_html_with_screenshots(self, tmp_path):

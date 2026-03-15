@@ -787,8 +787,8 @@ class TestTieredModelSupport:
 
         provider, models = get_tier_config("budget")
         assert provider == "gemini"
-        assert "lite" in models.fast
-        assert "flash" in models.smart
+        assert models.fast == "gemini-2.5-flash"
+        assert models.smart == "gemini-3-flash"
 
     def test_premium_uses_claude(self):
         from humanqa.core.llm import get_tier_config
@@ -802,8 +802,8 @@ class TestTieredModelSupport:
 
         provider, models = get_tier_config("openai")
         assert provider == "openai"
-        assert "gpt-4o-mini" in models.fast
-        assert "gpt-4o" == models.smart
+        assert models.fast == "gpt-4.1"
+        assert models.smart == "gpt-5.4"
 
     def test_invalid_tier_raises(self):
         from humanqa.core.llm import get_tier_config

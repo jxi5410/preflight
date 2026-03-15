@@ -39,8 +39,8 @@ TIER_PRESETS: dict[str, tuple[str, TierModels]] = {
     "budget": (
         "gemini",
         TierModels(
-            fast="gemini-2.0-flash-lite",
-            smart="gemini-2.0-flash",
+            fast="gemini-2.5-flash",
+            smart="gemini-3-flash",
         ),
     ),
     "premium": (
@@ -53,8 +53,8 @@ TIER_PRESETS: dict[str, tuple[str, TierModels]] = {
     "openai": (
         "openai",
         TierModels(
-            fast="gpt-4o-mini",
-            smart="gpt-4o",
+            fast="gpt-4.1",
+            smart="gpt-5.4",
         ),
     ),
 }
