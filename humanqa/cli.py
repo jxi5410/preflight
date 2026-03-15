@@ -85,6 +85,32 @@ def _interactive_run():
         "[bold]Any specific flows to focus on?[/bold] (comma-separated, or press Enter for auto): "
     ).strip() or None
 
+    mode = console.input(
+        "[bold]Run mode?[/bold] [dim](full=complete evaluation, quick=fast check)[/dim]\n"
+        "  Mode [full]: "
+    ).strip().lower() or "full"
+
+    if mode == "quick":
+        console.print(f"\n[bold]HumanQA Quick Check[/bold] — [cyan]{url}[/cyan]\n")
+        setup_logging(verbose=True)
+        from humanqa.core.quick_check import quick_check as run_quick_check
+        qc_result = asyncio.run(run_quick_check(url, focus=focus))
+        console.print(f"  Score: [bold]{qc_result.score:.0%}[/bold]")
+        console.print(f"  Time: {qc_result.duration_seconds}s")
+        if qc_result.issues:
+            console.print(f"  Issues: [bold]{len(qc_result.issues)}[/bold]")
+            for issue in qc_result.issues:
+                color = {
+                    "critical": "red", "high": "red", "medium": "yellow",
+                    "low": "blue", "info": "dim",
+                }.get(issue.severity, "white")
+                console.print(f"    [{color}][{issue.severity}][/{color}] {issue.title}")
+        else:
+            console.print("  [green]No issues found[/green]")
+        if qc_result.summary:
+            console.print(f"\n  [dim]{qc_result.summary}[/dim]")
+        return
+
     console.print(
         "\n[bold]Model tier?[/bold] "
         "[dim](balanced=Gemini default, budget=Gemini lite, premium=Claude, openai=GPT-4o)[/dim]"
@@ -267,6 +293,57 @@ def run(
     if fail_on and exit_code:
         console.print(f"\n[red]CI FAIL: Issues found at severity >= {fail_on}[/red]")
     sys.exit(exit_code)
+
+
+@main.command()
+@click.argument("url")
+@click.option("--focus", "-f", default=None, help="Focus area (e.g. 'checkout flow', 'accessibility')")
+@click.option("--tier", default="balanced",
+              type=click.Choice(["balanced", "budget", "premium", "openai"]),
+              help="Model tier")
+@click.option("--json-output", "json_out", is_flag=True, help="Output raw JSON instead of formatted text")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
+def check(url: str, focus: str | None, tier: str, json_out: bool, verbose: bool):
+    """Quick check a URL — fast, single-pass evaluation (~30s).
+
+    Examples:
+
+        humanqa check https://your-product.com
+
+        humanqa check https://your-product.com --focus "login flow"
+    """
+    setup_logging(verbose)
+
+    from humanqa.core.quick_check import quick_check as run_quick_check
+
+    result = asyncio.run(run_quick_check(url, focus=focus, tier=tier))
+
+    if json_out:
+        console.print(result.model_dump_json(indent=2))
+        return
+
+    console.print(f"\n[bold]HumanQA Quick Check[/bold] — {result.url}")
+    if result.product_name:
+        console.print(f"  Product: {result.product_name} ({result.product_type})")
+    console.print(f"  Score: [bold]{result.score:.0%}[/bold]")
+    console.print(f"  Time: {result.duration_seconds}s")
+    console.print()
+
+    if result.issues:
+        console.print(f"  [bold]{len(result.issues)} issues found:[/bold]")
+        for issue in result.issues:
+            color = {
+                "critical": "red", "high": "red", "medium": "yellow",
+                "low": "blue", "info": "dim",
+            }.get(issue.severity, "white")
+            console.print(f"    [{color}][{issue.severity}][/{color}] {issue.title}")
+            if issue.user_impact:
+                console.print(f"      [dim]{issue.user_impact}[/dim]")
+    else:
+        console.print("  [green]No issues found[/green]")
+
+    if result.summary:
+        console.print(f"\n  [dim]{result.summary}[/dim]")
 
 
 @main.command()
