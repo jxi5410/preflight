@@ -296,13 +296,18 @@ class TestResponsiveLensVision:
 
                 issues, score = _run(lens.review(result))
 
-                # Must have called vision API
-                mock_llm.complete_json_with_vision.assert_called_once()
+                # Must have called vision API (general + mobile detail = 2 calls)
+                assert mock_llm.complete_json_with_vision.call_count == 2
 
-                # Should have passed 2 images (desktop + mobile)
-                call_args = mock_llm.complete_json_with_vision.call_args
-                images = call_args.kwargs["images"]
+                # First call should have passed 2 images (desktop + mobile)
+                first_call = mock_llm.complete_json_with_vision.call_args_list[0]
+                images = first_call.kwargs["images"]
                 assert len(images) == 2, "Must send both desktop and mobile screenshots"
+
+                # Second call is mobile detail with 1 image
+                second_call = mock_llm.complete_json_with_vision.call_args_list[1]
+                mobile_images = second_call.kwargs.get("images") or second_call[1].get("images", [])
+                assert len(mobile_images) == 1, "Mobile detail call uses single mobile screenshot"
 
                 # Verify viewport sizes were used (two new_context calls)
                 assert mock_browser.new_context.call_count == 2

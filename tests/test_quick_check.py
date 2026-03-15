@@ -144,16 +144,42 @@ class TestQuickCheckResult:
 # quick_check function tests
 # ===========================================================================
 
+def _mock_playwright():
+    """Create a mock async_playwright that returns fake screenshots."""
+    mock_pw = MagicMock()
+    mock_browser = AsyncMock()
+    mock_context = AsyncMock()
+    mock_page = AsyncMock()
+
+    mock_pw.return_value.__aenter__ = AsyncMock(return_value=MagicMock(
+        chromium=MagicMock(launch=AsyncMock(return_value=mock_browser))
+    ))
+    mock_pw.return_value.__aexit__ = AsyncMock(return_value=False)
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_browser.close = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_context.close = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.wait_for_timeout = AsyncMock()
+    mock_page.evaluate = AsyncMock(return_value="Test page content")
+    mock_page.screenshot = AsyncMock(return_value=b"\x89PNG fake screenshot")
+
+    return mock_pw
+
+
+_PLAYWRIGHT_PATCH = "playwright.async_api.async_playwright"
+
+
 class TestQuickCheckFunction:
     """Tests for the quick_check async function."""
 
     def test_quick_check_with_mocked_llm(self):
         """Quick check should work with a mocked LLM returning valid JSON."""
         mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
+        mock_llm.complete_json_with_vision.return_value = {
             "product_name": "TestApp",
             "product_type": "saas",
-            "issues": [
+            "desktop_issues": [
                 {
                     "title": "Missing alt text on hero image",
                     "severity": "medium",
@@ -162,65 +188,52 @@ class TestQuickCheckFunction:
                     "user_impact": "Screen readers skip the main image",
                 }
             ],
+            "mobile_issues": [],
             "summary": "Generally good, one accessibility issue",
             "score": 0.8,
         }
 
-        with patch(_WEB_RUNNER_PATCH) as MockRunner:
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(
-                return_value="<h1>Welcome to TestApp</h1><p>Your SaaS dashboard</p>"
-            )
-            MockRunner.return_value = mock_instance
-
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
             result = asyncio.get_event_loop().run_until_complete(
                 quick_check("https://example.com", llm=mock_llm)
             )
 
         assert result.url == "https://example.com"
         assert result.product_name == "TestApp"
-        assert len(result.issues) == 1
-        assert result.issues[0].title == "Missing alt text on hero image"
-        assert result.issues[0].severity == "medium"
+        assert len(result.issues) >= 1
+        assert any(i.title == "Missing alt text on hero image" for i in result.issues)
         assert result.score == 0.8
         assert result.duration_seconds >= 0
 
     def test_quick_check_with_focus(self):
         """Focus area should be passed to the LLM prompt."""
         mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
+        mock_llm.complete_json_with_vision.return_value = {
             "product_name": "TestApp",
             "product_type": "saas",
-            "issues": [],
+            "desktop_issues": [],
+            "mobile_issues": [],
             "summary": "Login flow looks good",
             "score": 0.95,
         }
 
-        with patch(_WEB_RUNNER_PATCH) as MockRunner:
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(return_value="Login page")
-            MockRunner.return_value = mock_instance
-
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
             result = asyncio.get_event_loop().run_until_complete(
                 quick_check("https://example.com", focus="login flow", llm=mock_llm)
             )
 
-        # Verify focus was included in the prompt
-        call_args = mock_llm.complete_json.call_args
-        prompt = call_args[0][0]
+        # Verify focus was included in the first vision call prompt
+        first_call = mock_llm.complete_json_with_vision.call_args_list[0]
+        prompt = first_call[0][0]
         assert "login flow" in prompt
         assert result.score == 0.95
 
     def test_quick_check_llm_failure(self):
         """Quick check should handle LLM failures gracefully."""
         mock_llm = MagicMock()
-        mock_llm.complete_json.side_effect = Exception("API error")
+        mock_llm.complete_json_with_vision.side_effect = Exception("API error")
 
-        with patch(_WEB_RUNNER_PATCH) as MockRunner:
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(return_value="Page content")
-            MockRunner.return_value = mock_instance
-
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
             result = asyncio.get_event_loop().run_until_complete(
                 quick_check("https://example.com", llm=mock_llm)
             )
@@ -230,108 +243,145 @@ class TestQuickCheckFunction:
         assert result.score == 0.5
         assert result.issues == []
 
-    def test_quick_check_scrape_failure(self):
-        """Quick check should handle scrape failures gracefully."""
-        mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
-            "product_name": "",
-            "product_type": "",
-            "issues": [],
-            "summary": "Could not load page",
-            "score": 0.5,
-        }
-
-        with patch(_WEB_RUNNER_PATCH) as MockRunner:
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(
-                side_effect=Exception("Connection refused")
-            )
-            MockRunner.return_value = mock_instance
-
-            result = asyncio.get_event_loop().run_until_complete(
-                quick_check("https://example.com", llm=mock_llm)
-            )
-
-        # Should still complete, not crash
-        assert result.url == "https://example.com"
-        # The LLM was called with error info in content
-        call_args = mock_llm.complete_json.call_args
-        prompt = call_args[0][0]
-        assert "Failed to load" in prompt
-
     def test_quick_check_score_clamped(self):
         """Score should be clamped to 0.0-1.0."""
         mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
+        mock_llm.complete_json_with_vision.return_value = {
             "product_name": "Test",
             "product_type": "saas",
-            "issues": [],
+            "desktop_issues": [],
+            "mobile_issues": [],
             "summary": "Great",
             "score": 1.5,  # Out of range
         }
 
-        with patch(_WEB_RUNNER_PATCH) as MockRunner:
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(return_value="Content")
-            MockRunner.return_value = mock_instance
-
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
             result = asyncio.get_event_loop().run_until_complete(
                 quick_check("https://example.com", llm=mock_llm)
             )
 
         assert result.score == 1.0  # Clamped to max
 
-    def test_quick_check_content_truncation(self):
-        """Long content should be truncated to avoid token overflow."""
-        mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
-            "product_name": "Test",
-            "product_type": "saas",
-            "issues": [],
-            "summary": "OK",
-            "score": 0.9,
-        }
-
-        with patch(_WEB_RUNNER_PATCH) as MockRunner:
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(
-                return_value="x" * 20000  # Very long content
-            )
-            MockRunner.return_value = mock_instance
-
-            result = asyncio.get_event_loop().run_until_complete(
-                quick_check("https://example.com", llm=mock_llm)
-            )
-
-        # Verify content was truncated in prompt
-        call_args = mock_llm.complete_json.call_args
-        prompt = call_args[0][0]
-        assert "truncated" in prompt
-        assert len(prompt) < 20000
-
     def test_quick_check_uses_fast_tier(self):
-        """Quick check should use the fast tier for LLM calls."""
+        """Quick check should use the fast tier for vision LLM calls."""
         mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
+        mock_llm.complete_json_with_vision.return_value = {
             "product_name": "Test",
             "product_type": "saas",
-            "issues": [],
+            "desktop_issues": [],
+            "mobile_issues": [],
             "summary": "OK",
             "score": 0.9,
         }
 
-        with patch(_WEB_RUNNER_PATCH) as MockRunner:
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(return_value="Content")
-            MockRunner.return_value = mock_instance
-
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
             asyncio.get_event_loop().run_until_complete(
                 quick_check("https://example.com", llm=mock_llm)
             )
 
         # Verify fast tier was used
-        call_kwargs = mock_llm.complete_json.call_args
+        call_kwargs = mock_llm.complete_json_with_vision.call_args
         assert call_kwargs.kwargs.get("tier") == "fast"
+
+    def test_quick_check_viewport_field(self):
+        """Issues should have correct viewport field set."""
+        mock_llm = MagicMock()
+        mock_llm.complete_json_with_vision.return_value = {
+            "product_name": "Test",
+            "product_type": "saas",
+            "desktop_issues": [
+                {"title": "Desktop bug", "severity": "low", "category": "ui",
+                 "confidence": 0.7, "user_impact": "Minor"}
+            ],
+            "mobile_issues": [
+                {"title": "Mobile cutoff", "severity": "high", "category": "responsive",
+                 "confidence": 0.9, "user_impact": "Content hidden"}
+            ],
+            "summary": "Issues on both viewports",
+            "score": 0.6,
+        }
+
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
+            result = asyncio.get_event_loop().run_until_complete(
+                quick_check("https://example.com", llm=mock_llm)
+            )
+
+        desktop = [i for i in result.issues if i.viewport == "desktop"]
+        mobile = [i for i in result.issues if i.viewport == "mobile"]
+        assert len(desktop) >= 1
+        assert len(mobile) >= 1
+        assert desktop[0].title == "Desktop bug"
+        assert mobile[0].title == "Mobile cutoff"
+
+    def test_quick_check_mobile_detail_pass_runs(self):
+        """A second dedicated mobile detail check should run when mobile screenshot exists."""
+        mock_llm = MagicMock()
+        # First call: general evaluation
+        mock_llm.complete_json_with_vision.side_effect = [
+            {
+                "product_name": "Test",
+                "product_type": "saas",
+                "desktop_issues": [],
+                "mobile_issues": [],
+                "summary": "OK",
+                "score": 0.9,
+            },
+            # Second call: mobile detail check
+            {
+                "mobile_issues": [
+                    {"title": "Header covers content", "severity": "high",
+                     "category": "responsive", "confidence": 0.9,
+                     "user_impact": "First list item hidden behind nav bar"}
+                ],
+                "mobile_score": 0.5,
+            },
+        ]
+
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
+            result = asyncio.get_event_loop().run_until_complete(
+                quick_check("https://example.com", llm=mock_llm)
+            )
+
+        # Should have called vision twice (general + mobile detail)
+        assert mock_llm.complete_json_with_vision.call_count == 2
+        # The mobile detail issue should appear in results
+        assert any(i.title == "Header covers content" for i in result.issues)
+
+    def test_quick_check_deduplicates_issues(self):
+        """Duplicate issues from general and mobile detail passes should be deduped."""
+        mock_llm = MagicMock()
+        mock_llm.complete_json_with_vision.side_effect = [
+            {
+                "product_name": "Test",
+                "product_type": "saas",
+                "desktop_issues": [],
+                "mobile_issues": [
+                    {"title": "Overlap bug", "severity": "high",
+                     "category": "responsive", "confidence": 0.9,
+                     "user_impact": "Elements overlap"}
+                ],
+                "summary": "OK",
+                "score": 0.7,
+            },
+            # Mobile detail returns same issue
+            {
+                "mobile_issues": [
+                    {"title": "Overlap bug", "severity": "high",
+                     "category": "responsive", "confidence": 0.9,
+                     "user_impact": "Elements overlap"}
+                ],
+                "mobile_score": 0.6,
+            },
+        ]
+
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()):
+            result = asyncio.get_event_loop().run_until_complete(
+                quick_check("https://example.com", llm=mock_llm)
+            )
+
+        # Should only have one copy of "Overlap bug"
+        overlap_issues = [i for i in result.issues if i.title == "Overlap bug"]
+        assert len(overlap_issues) == 1
 
 
 # ===========================================================================
@@ -346,20 +396,18 @@ class TestMCPServerTools:
         from preflight.mcp_server import preflight_quick_check
 
         mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
+        mock_llm.complete_json_with_vision.return_value = {
             "product_name": "TestApp",
             "product_type": "saas",
-            "issues": [{"title": "Bug", "severity": "low", "category": "ux",
+            "desktop_issues": [{"title": "Bug", "severity": "low", "category": "ux",
                         "confidence": 0.7, "user_impact": "Minor"}],
+            "mobile_issues": [],
             "summary": "Mostly good",
             "score": 0.9,
         }
 
-        with patch(_WEB_RUNNER_PATCH) as MockRunner, \
+        with patch(_PLAYWRIGHT_PATCH, _mock_playwright()), \
              patch("preflight.core.quick_check.LLMClient", return_value=mock_llm):
-            mock_instance = MagicMock()
-            mock_instance.scrape_landing_page = AsyncMock(return_value="Test page")
-            MockRunner.return_value = mock_instance
 
             result_json = asyncio.get_event_loop().run_until_complete(
                 preflight_quick_check(url="https://example.com", focus="", tier="balanced")
@@ -368,7 +416,7 @@ class TestMCPServerTools:
         data = json.loads(result_json)
         assert data["url"] == "https://example.com"
         assert data["product_name"] == "TestApp"
-        assert len(data["issues"]) == 1
+        assert len(data["issues"]) >= 1
 
     def test_mcp_get_report_missing(self):
         """MCP get_report should return error for missing reports."""
