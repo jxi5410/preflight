@@ -6,7 +6,7 @@ and that persona_generator guarantees a mobile_web persona.
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import tempfile
 import pytest
 
@@ -85,23 +85,35 @@ class TestDesignLensVision:
             (Path(tmpdir) / "page-02.png").write_bytes(b"\x89PNG fake image data 2")
 
             lens = DesignLens(llm=mock_llm, output_dir=tmpdir)
-            issues = _run(lens.review(run_result))
+
+            with patch("preflight.lenses.design_lens.async_playwright") as mock_pw:
+                mock_browser = AsyncMock()
+                mock_context = AsyncMock()
+                mock_page = AsyncMock()
+                mock_pw.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
+                mock_browser.new_context = AsyncMock(return_value=mock_context)
+                mock_context.new_page = AsyncMock(return_value=mock_page)
+                mock_page.goto = AsyncMock()
+                mock_page.wait_for_timeout = AsyncMock()
+                mock_page.screenshot = AsyncMock(return_value=b"\x89PNG mobile")
+
+                issues = _run(lens.review(run_result))
 
             # MUST use vision API, not text-only
             mock_llm.complete_json_with_vision.assert_called_once()
             mock_llm.complete_json.assert_not_called()
 
-            # Should have passed images
+            # Should have passed images (2 desktop from files + 1 mobile captured)
             call_args = mock_llm.complete_json_with_vision.call_args
             images = call_args.kwargs["images"]
-            assert len(images) == 2
+            assert len(images) == 3
             assert all(mime == "image/png" for _, mime in images)
 
             assert len(issues) == 1
             assert issues[0].title == "Misaligned heading"
 
-    def test_falls_back_to_text_when_no_screenshots(self):
-        """When no screenshots exist, falls back to complete_json with warning."""
+    def test_falls_back_to_text_when_no_screenshots_and_capture_fails(self):
+        """When no screenshots exist and mobile capture fails, falls back to complete_json."""
         from preflight.lenses.design_lens import DesignLens
 
         mock_llm = self._make_llm()
@@ -109,7 +121,12 @@ class TestDesignLensVision:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             lens = DesignLens(llm=mock_llm, output_dir=tmpdir)
-            issues = _run(lens.review(run_result))
+
+            with patch("preflight.lenses.design_lens.async_playwright") as mock_pw:
+                # Make Playwright fail so no mobile screenshot captured
+                mock_pw.return_value.__aenter__.side_effect = Exception("No browser")
+
+                issues = _run(lens.review(run_result))
 
             # Falls back to text-only
             mock_llm.complete_json.assert_called_once()

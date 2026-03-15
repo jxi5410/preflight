@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from playwright.async_api import async_playwright
+
 from preflight.core.llm import LLMClient
 from preflight.core.schemas import (
     Issue,
@@ -77,7 +79,11 @@ DESIGN_REVIEW_PROMPT = """Review the design quality of this product.
 {product_name} ({product_type})
 Target audience: {target_audience}
 
-## Screenshots available
+## Screenshots provided
+You are receiving desktop screenshots (1440x900) AND mobile screenshots (390x844).
+Evaluate both viewports for design quality. Note any design issues that appear
+only on mobile or are worse on mobile.
+
 {screenshot_list}
 
 ## Page descriptions from evaluation
@@ -126,15 +132,22 @@ class DesignLens:
                 if f.name not in screenshot_names:
                     screenshot_names.append(f.name)
 
-        # Load actual screenshot files for vision evaluation
+        # Load actual screenshot files for vision evaluation (desktop)
         images: list[tuple[bytes, str]] = []
-        for name in screenshot_names[:10]:  # Cap to manage token budget
+        for name in screenshot_names[:8]:  # Cap to manage token budget
             path = self.output_dir / name
             if path.exists():
                 try:
                     images.append((path.read_bytes(), "image/png"))
                 except Exception as e:
                     logger.debug("Could not read screenshot %s: %s", name, e)
+
+        # Capture mobile viewport screenshots for design evaluation
+        target_url = run_result.config.target_url
+        mobile_bytes = await self._capture_mobile_screenshot(target_url)
+        if mobile_bytes:
+            images.append((mobile_bytes, "image/png"))
+            screenshot_names.append("design-mobile-390x844.png")
 
         # Build page descriptions from coverage and issues
         page_descs = []
@@ -194,3 +207,34 @@ class DesignLens:
         except Exception as e:
             logger.error("Design review failed: %s", e)
             return []
+
+    async def _capture_mobile_screenshot(self, url: str) -> bytes | None:
+        """Capture a screenshot at mobile viewport (390x844) for design evaluation."""
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context(
+                    viewport={"width": 390, "height": 844},
+                    user_agent=(
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+                        "Mobile/15E148 Safari/604.1"
+                    ),
+                )
+                page = await context.new_page()
+                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(2000)
+
+                screenshot_bytes = await page.screenshot(full_page=True, timeout=10000)
+
+                # Save to disk
+                self.output_dir.mkdir(parents=True, exist_ok=True)
+                out_path = self.output_dir / "design-mobile-390x844.png"
+                out_path.write_bytes(screenshot_bytes)
+
+                await browser.close()
+                return screenshot_bytes
+
+        except Exception as e:
+            logger.warning("Failed to capture mobile screenshot for design review: %s", e)
+            return None
