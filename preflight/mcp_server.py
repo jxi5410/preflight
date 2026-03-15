@@ -363,10 +363,7 @@ def main():
         )
         sys.exit(1)
 
-    server = FastMCP(
-        "Preflight",
-        description="External-experience AI QA system — evaluates products like real users would",
-    )
+    server = FastMCP("Preflight")
     _register_mcp_tools(server)
     server.run()
 
