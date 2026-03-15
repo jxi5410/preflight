@@ -99,6 +99,8 @@ async def quick_check(
 ) -> QuickCheckResult:
     """Run a quick, single-pass evaluation of a URL.
 
+    Captures both desktop and mobile screenshots and evaluates via vision.
+
     Args:
         url: The URL to check.
         focus: Optional focus area (e.g. "checkout flow", "accessibility").
@@ -108,47 +110,131 @@ async def quick_check(
     Returns:
         QuickCheckResult with issues and summary.
     """
+    import base64
     import time
+
+    from playwright.async_api import async_playwright
 
     start = time.monotonic()
 
     if llm is None:
         llm = LLMClient(tier=tier)
 
-    # Step 1: Scrape the page (with a11y tree for input detection)
-    from preflight.runners.web_runner import WebRunner
-
-    runner = WebRunner(llm, "/tmp/preflight_quick")
+    # Step 1: Capture desktop + mobile screenshots and page content
+    desktop_screenshot = b""
+    mobile_screenshot = b""
+    content = ""
     accessibility_tree = ""
+
     try:
-        scrape_result = await runner.scrape_landing_page(url, include_a11y_tree=True)
-        if isinstance(scrape_result, tuple):
-            content, accessibility_tree = scrape_result
-        else:
-            content = scrape_result
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+
+            # Desktop capture
+            desktop_ctx = await browser.new_context(
+                viewport={"width": 1440, "height": 900}
+            )
+            desktop_page = await desktop_ctx.new_page()
+            await desktop_page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await desktop_page.wait_for_timeout(2000)
+            content = await desktop_page.evaluate("() => document.body.innerText") or ""
+            desktop_screenshot = await desktop_page.screenshot(full_page=True)
+            await desktop_ctx.close()
+
+            # Mobile capture
+            mobile_ctx = await browser.new_context(
+                viewport={"width": 390, "height": 844},
+                user_agent=(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+                    "Mobile/15E148 Safari/604.1"
+                ),
+            )
+            mobile_page = await mobile_ctx.new_page()
+            await mobile_page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await mobile_page.wait_for_timeout(2000)
+            mobile_screenshot = await mobile_page.screenshot(full_page=True)
+            await mobile_ctx.close()
+
+            await browser.close()
+
     except Exception as e:
-        logger.warning("Quick check scrape failed for %s: %s", url, e)
+        logger.warning("Quick check screenshot capture failed for %s: %s", url, e)
         content = f"(Failed to load page: {e})"
 
     if not content:
         content = "(Page returned no visible content)"
+    if len(content) > 6000:
+        content = content[:6000] + "\n...(truncated)"
 
-    # Cap content to avoid token overflow
-    if len(content) > 8000:
-        content = content[:8000] + "\n...(truncated)"
-
-    # Step 2: Single LLM call (with input detection)
+    # Step 2: Vision-based evaluation with both screenshots
     focus_section = f"Focus area: {focus}\n" if focus else ""
-    prompt = QUICK_CHECK_PROMPT.format(
-        url=url,
-        content=content,
-        accessibility_tree=accessibility_tree[:3000] if accessibility_tree else "(not available)",
-        focus_section=focus_section,
-        input_first_section="",
-    )
+
+    vision_prompt = f"""You are Preflight, an AI QA evaluation system. You are looking at TWO screenshots of the same page:
+
+IMAGE 1: Desktop viewport (1440x900)
+IMAGE 2: Mobile viewport (390x844, iPhone)
+
+URL: {url}
+{focus_section}
+Page text (truncated):
+{content}
+
+Evaluate this page from a real user's perspective. Check BOTH desktop and mobile versions.
+
+For the DESKTOP version, check:
+- Visual design: alignment, spacing, sizing, hierarchy, polish
+- Functionality: do elements look clickable/interactive? Any broken layouts?
+- Trust: does this look professional and trustworthy?
+- Content: is the copy clear and helpful?
+
+For the MOBILE version, specifically check:
+- Is any content CUT OFF or hidden that's visible on desktop?
+- Are there ALIGNMENT issues or overlapping elements?
+- Are touch targets (buttons, links) large enough to tap?
+- Does the navigation adapt properly (hamburger menu, etc.)?
+- Is there unwanted HORIZONTAL SCROLLING?
+- Is text readable without zooming?
+- Is critical information visible above the fold?
+
+Respond with JSON:
+{{
+  "product_name": "name",
+  "product_type": "saas | marketing | ecommerce | content | other",
+  "input_first": false,
+  "input_type": "",
+  "issues": [
+    {{
+      "title": "short issue title",
+      "severity": "critical | high | medium | low | info",
+      "category": "functional | ux | ui | performance | trust | responsive | design",
+      "confidence": 0.8,
+      "user_impact": "what the user experiences",
+      "viewport": "desktop | mobile | both"
+    }}
+  ],
+  "summary": "1-2 sentence overall assessment covering both desktop and mobile",
+  "score": 0.75
+}}
+
+Be specific about WHICH viewport each issue affects. If something is broken on mobile but fine on desktop, say so.
+Return 0-15 issues, prioritized by severity."""
 
     try:
-        data = llm.complete_json(prompt, tier="fast")
+        images = []
+        if desktop_screenshot:
+            images.append((desktop_screenshot, "image/png"))
+        if mobile_screenshot:
+            images.append((mobile_screenshot, "image/png"))
+
+        if images:
+            data = llm.complete_json_with_vision(
+                vision_prompt, images=images, tier="fast"
+            )
+        else:
+            # Fallback to text-only if screenshots failed
+            data = llm.complete_json(vision_prompt, tier="fast")
+
     except Exception as e:
         logger.warning("Quick check LLM call failed: %s", e)
         elapsed = time.monotonic() - start
@@ -168,7 +254,7 @@ async def quick_check(
 
         seed = get_heuristic_seed_input(input_type)
         try:
-            seed_content = await _quick_check_seed_input(runner, url, seed.input_text)
+            seed_content = await _quick_check_seed_input(None, url, seed.input_text)
             if seed_content:
                 seed_prompt = QUICK_CHECK_PROMPT.format(
                     url=url,
@@ -183,10 +269,8 @@ async def quick_check(
                 )
                 try:
                     seed_data = llm.complete_json(seed_prompt, tier="fast")
-                    # Merge seed input issues with landing page issues
                     for raw_issue in seed_data.get("issues", []):
                         data.setdefault("issues", []).append(raw_issue)
-                    # Update summary if seed provided one
                     if seed_data.get("summary"):
                         data["summary"] = (
                             data.get("summary", "")
