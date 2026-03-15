@@ -34,24 +34,53 @@ RESPONSIVE_SYSTEM_PROMPT = """You are a mobile responsiveness evaluator for Pref
 
 You are receiving TWO screenshots of the same page:
 1. Desktop viewport (1440x900)
-2. Mobile viewport (390x844)
+2. Mobile viewport (390x844, iPhone)
 
 IMPORTANT: Base ALL findings on what you literally see in these screenshots.
-Compare the two images side by side to identify responsive design issues.
+Focus primarily on the MOBILE screenshot. Most users are on phones.
 
-Focus on:
+═══════════════════════════════════════════════════════
+MOBILE-SPECIFIC CHECKS (highest priority)
+═══════════════════════════════════════════════════════
+
+A. CONTENT HIDDEN BY HEADERS: Look at the TOP of the mobile screenshot. Is any
+   page content (text, cards, list items) partially hidden behind a fixed navigation
+   bar, search bar, or sticky header? If the first visible content item appears to
+   start mid-sentence or mid-element, this is a cut-off bug.
+
+B. OVERLAPPING ELEMENTS: Are there any buttons, panels, filters, or UI components
+   that visually overlap each other? Elements should never stack on top of each
+   other unless it's an intentional modal with a backdrop.
+
+C. PANELS WITHOUT CLOSE BUTTONS: Are there any open panels, sidebars, filter
+   drawers, or overlays that have no visible close button (X) and no obvious way
+   to dismiss them?
+
+D. ZOOM/SCALE ISSUES: Does the initial view show an appropriate amount of content?
+   If a map or content area appears extremely zoomed in with very little visible,
+   the default zoom is wrong for mobile.
+
+E. TOUCH TARGET OVERLAP: Are any clickable elements so close together that a finger
+   tap would likely hit the wrong one?
+
+F. HORIZONTAL OVERFLOW: Can you see a horizontal scrollbar or content extending
+   beyond the right edge of the 390px viewport?
+
+═══════════════════════════════════════════════════════
+GENERAL RESPONSIVE CHECKS
+═══════════════════════════════════════════════════════
+
 1. **Layout breaks**: Content that overflows, overlaps, or becomes unreadable on mobile
 2. **Touch targets**: Buttons/links that appear too small for finger taps on mobile
 3. **Text sizing**: Text too small to read on mobile
 4. **Navigation**: Desktop nav that doesn't adapt to mobile (no hamburger/drawer)
-5. **Horizontal scroll**: Content wider than the mobile viewport
-6. **Image scaling**: Images that don't scale down or break layout
-7. **Form usability**: Inputs too small, dropdowns unusable on touch
-8. **Cut-off content**: Elements clipped or hidden on mobile that are visible on desktop
-9. **Spacing**: Padding/margins that don't adapt between viewports
+5. **Image scaling**: Images that don't scale down or break layout
+6. **Form usability**: Inputs too small, dropdowns unusable on touch
+7. **Spacing**: Padding/margins that don't adapt between viewports
 
 You MUST cite specific evidence for every finding by referencing what you see
-in the desktop vs mobile screenshots.
+in the desktop vs mobile screenshots. Every mobile layout problem (A-F above)
+is at least "high" severity.
 
 Respond with JSON:
 {
@@ -77,17 +106,43 @@ RESPONSIVE_EVAL_PROMPT = """Evaluate mobile responsiveness by comparing the desk
 ## Target URL: {target_url}
 
 The first image is the DESKTOP screenshot (1440x900 viewport).
-The second image is the MOBILE screenshot (390x844 viewport).
+The second image is the MOBILE screenshot (390x844 viewport, iPhone).
 
-Compare them and identify:
-1. Layout elements that break or overflow on mobile
-2. Text that becomes unreadable on mobile
-3. Navigation that doesn't adapt (missing hamburger menu, etc.)
-4. Touch targets that are too small on mobile
-5. Content that is cut off or hidden on mobile
-6. Spacing/padding issues between viewports
+FOCUS ON THE MOBILE SCREENSHOT FIRST. Compare with desktop to identify issues.
 
+Check these specific mobile problems (most common bugs):
+1. Content hidden behind fixed headers/nav bars — look at the TOP of mobile
+2. Overlapping elements — panels, filters, buttons stacking on each other
+3. Panels/overlays with no close button or dismiss mechanism
+4. Map or content areas too zoomed in for initial mobile view
+5. Touch targets too close together for finger taps
+6. Horizontal overflow beyond the 390px viewport edge
+7. Navigation that doesn't adapt (full desktop nav crammed into mobile)
+8. Text too small to read without zooming
+
+For each issue, describe EXACTLY where on the mobile screen it appears.
 Rate overall responsive quality 0.0-1.0."""
+
+
+MOBILE_DETAIL_PROMPT = """Look at this mobile screenshot (390px wide, iPhone).
+
+Check these specific issues — they are the most common mobile bugs:
+
+A. CONTENT HIDDEN BY HEADERS: Is any page content (text, cards, list items) partially hidden behind a fixed navigation bar, search bar, or sticky header at the top of the screen? If the first visible content item appears to start mid-sentence or mid-element, this is a cut-off bug.
+
+B. OVERLAPPING ELEMENTS: Are there any buttons, panels, filters, or UI components that visually overlap each other? Elements should never stack on top of each other unless it's an intentional modal.
+
+C. PANELS WITHOUT CLOSE BUTTONS: Are there any open panels, sidebars, filter drawers, or overlays that have no visible close button (X) and no obvious way to dismiss them?
+
+D. ZOOM/SCALE ISSUES: Does the initial view show an appropriate amount of content? If a map or content area appears extremely zoomed in with very little visible, the default zoom is wrong for mobile.
+
+E. TOUCH TARGET OVERLAP: Are any clickable elements so close together that a finger tap would likely hit the wrong one?
+
+F. HORIZONTAL OVERFLOW: Can you see a horizontal scrollbar or content extending beyond the right edge?
+
+For each issue found, describe EXACTLY where on the screen it is (top-left, center, behind the nav bar, etc.) and what element is affected.
+
+Respond with JSON: {"mobile_issues": [{"title": "...", "severity": "critical|high|medium|low", "confidence": 0.0-1.0, "user_impact": "...", "observed_facts": ["..."], "inferred_judgment": "...", "repair_brief": "...", "affects_viewport": "mobile"}], "mobile_score": 0.0-1.0}"""
 
 
 class ResponsiveLens:
@@ -143,6 +198,26 @@ class ResponsiveLens:
         except Exception as e:
             logger.warning("Responsive lens vision evaluation failed: %s", e)
             return [], 0.5
+
+        # Dedicated mobile detail check — second call on mobile screenshot only
+        if mobile_bytes:
+            try:
+                mobile_data = self.llm.complete_json_with_vision(
+                    MOBILE_DETAIL_PROMPT,
+                    images=[(mobile_bytes, "image/png")],
+                )
+                mobile_extra = mobile_data.get("mobile_issues", [])
+                if mobile_extra:
+                    existing_titles = {r.get("title", "") for r in data.get("issues", [])}
+                    for raw in mobile_extra:
+                        if raw.get("title", "") not in existing_titles:
+                            data.setdefault("issues", []).append(raw)
+                    logger.info(
+                        "Mobile detail check added %d issues to responsive lens",
+                        len(mobile_extra),
+                    )
+            except Exception as e:
+                logger.warning("Responsive lens mobile detail check failed: %s", e)
 
         issues: list[Issue] = []
         for raw in data.get("issues", []):
