@@ -16,6 +16,7 @@ from preflight.core.intent_modeler import IntentModeler
 from preflight.core.llm import LLMClient
 from preflight.core.orchestrator import Orchestrator
 from preflight.core.persona_generator import PersonaGenerator
+from preflight.core.seed_input import SeedInputGenerator
 from preflight.core.progress import PipelineProgress
 from preflight.core.repo_analyzer import RepoAnalyzer
 from preflight.core.schemas import RunConfig, RunResult
@@ -147,6 +148,14 @@ async def run_pipeline(config: RunConfig) -> RunResult:
         agents = agents[:MAX_AGENTS]
     progress.update_stats(agents=len(agents))
     progress.complete_step("personas", f"{len(agents)} personas: " + ", ".join(a.name for a in agents[:4]))
+
+    # Step 3b: Generate seed inputs for input-first products
+    if intent.input_first:
+        seed_gen = SeedInputGenerator(llm)
+        for agent in agents:
+            agent.seed_inputs = seed_gen.generate_for_persona(intent, agent)
+        total_seeds = sum(len(a.seed_inputs) for a in agents)
+        logger.info("Generated %d total seed inputs for %d agents", total_seeds, len(agents))
 
     # Step 4: Orchestrate evaluation (with timeout)
     progress.start_step("evaluate", f"{len(agents)} agents x {len(intent.critical_journeys)} journeys")
