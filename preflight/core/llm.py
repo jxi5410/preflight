@@ -32,7 +32,7 @@ TIER_PRESETS: dict[str, tuple[str, TierModels]] = {
     "balanced": (
         "gemini",
         TierModels(
-            fast="gemini-3-flash",
+            fast="gemini-3-flash-preview",
             smart="gemini-3.1-pro-preview",
         ),
     ),
@@ -40,7 +40,7 @@ TIER_PRESETS: dict[str, tuple[str, TierModels]] = {
         "gemini",
         TierModels(
             fast="gemini-2.5-flash",
-            smart="gemini-3-flash",
+            smart="gemini-3-flash-preview",
         ),
     ),
     "premium": (
