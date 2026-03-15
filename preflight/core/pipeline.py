@@ -96,22 +96,30 @@ async def run_pipeline(config: RunConfig) -> RunResult:
         else:
             progress.complete_step("repo", "Timed out — continuing without repo insights")
 
-    # Step 1b: Scrape landing page
+    # Step 1b: Scrape landing page (with accessibility tree for input detection)
     progress.start_step("scrape", config.target_url)
     web_runner = WebRunner(llm, config.output_dir)
-    page_content = await _with_timeout(
-        web_runner.scrape_landing_page(config.target_url),
+    scrape_result = await _with_timeout(
+        web_runner.scrape_landing_page(config.target_url, include_a11y_tree=True),
         STEP_TIMEOUT_SECONDS["scrape"],
         "scrape",
     )
-    if page_content is None:
+    if scrape_result is None:
         page_content = "(scrape timed out)"
+        accessibility_tree = ""
+    elif isinstance(scrape_result, tuple):
+        page_content, accessibility_tree = scrape_result
+    else:
+        page_content = scrape_result
+        accessibility_tree = ""
     progress.complete_step("scrape", f"Loaded {len(page_content)} chars of visible content")
 
     # Step 2: Build Product Intent Model
     progress.start_step("intent")
     modeler = IntentModeler(llm)
-    intent = await modeler.build_intent_model(config, page_content, repo_insights)
+    intent = await modeler.build_intent_model(
+        config, page_content, repo_insights, accessibility_tree=accessibility_tree,
+    )
     progress.update_stats(product=intent.product_name)
     progress.complete_step(
         "intent",

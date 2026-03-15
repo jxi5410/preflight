@@ -30,6 +30,7 @@ You will receive:
 - Any user-supplied brief or context
 - Optional focus flows and persona hints
 - Optional repository insights (product claims extracted from README, docs, etc.)
+- Optional accessibility tree showing the page's interactive elements
 
 When repository insights are provided, cross-reference them with what you see in the UI.
 Build a feature expectation list: features the repo claims should exist.
@@ -45,6 +46,9 @@ From this, infer:
 - trust_sensitive_actions: Actions where trust, accuracy, or safety matter most
 - institutional_relevance: "none" | "low" | "moderate" | "high" — would serious professionals/institutions use this?
 - institutional_reasoning: Why you assigned that relevance level
+- input_first: true if the product's primary interaction requires user input before showing content (e.g. search engines, AI tools, URL analyzers). Strong signals: prominent input/textarea as main element, input with submit button as primary CTA, placeholder like "Search...", "Enter URL...", "Ask anything...", page has very little content besides the input. false otherwise.
+- input_type: If input_first is true, one of: "search", "prompt", "url", "code", "data", "free_text". Empty string if input_first is false.
+- input_placeholder: If input_first is true, the actual placeholder text from the input field. Empty string if not applicable.
 - assumptions: What you're assuming that could be wrong
 - confidence: 0.0-1.0 how confident you are in this model
 - feature_expectations: list of {{feature_name, source}} objects for features the product claims to offer
@@ -58,6 +62,9 @@ INTENT_PROMPT_TEMPLATE = """Analyze this product and build a Product Intent Mode
 
 ## Scraped Landing Page Content
 {page_content}
+
+## Accessibility Tree (interactive elements)
+{accessibility_tree}
 
 ## User-Supplied Brief
 {brief}
@@ -75,6 +82,8 @@ Respond with a JSON object with these fields:
 product_name, product_type, target_audience (list), primary_jobs (list),
 user_expectations (list), critical_journeys (list), trust_sensitive_actions (list),
 institutional_relevance ("none"|"low"|"moderate"|"high"), institutional_reasoning (string),
+input_first (bool), input_type (string: "search"|"prompt"|"url"|"code"|"data"|"free_text"|""),
+input_placeholder (string),
 assumptions (list), confidence (float 0-1),
 feature_expectations (list of {{"feature_name": "...", "source": "..."}})."""
 
@@ -123,11 +132,13 @@ class IntentModeler:
         config: RunConfig,
         page_content: str,
         repo_insights: RepoInsights | None = None,
+        accessibility_tree: str = "",
     ) -> ProductIntentModel:
         """Build a Product Intent Model from scraped content, config, and optional repo insights."""
         prompt = INTENT_PROMPT_TEMPLATE.format(
             url=config.target_url,
             page_content=page_content[:12000],
+            accessibility_tree=accessibility_tree[:5000] if accessibility_tree else "(not available)",
             brief=config.brief or "(none provided)",
             focus_flows=", ".join(config.focus_flows) if config.focus_flows else "(none)",
             persona_hints=", ".join(config.persona_hints) if config.persona_hints else "(none)",
@@ -141,6 +152,11 @@ class IntentModeler:
             # Map institutional_relevance string to enum
             ir_raw = data.get("institutional_relevance", "none")
             data["institutional_relevance"] = InstitutionalRelevance(ir_raw)
+
+            # Normalize input_first fields
+            data.setdefault("input_first", False)
+            data.setdefault("input_type", "")
+            data.setdefault("input_placeholder", "")
 
             # Extract feature expectations from LLM response
             raw_expectations = data.pop("feature_expectations", [])
@@ -159,10 +175,11 @@ class IntentModeler:
                 feature_expectations=feature_expectations,
             )
             logger.info(
-                "Intent model built: %s (%s), confidence=%.2f, features=%d",
+                "Intent model built: %s (%s), confidence=%.2f, input_first=%s, features=%d",
                 model.product_name,
                 model.product_type,
                 model.confidence,
+                model.input_first,
                 len(model.feature_expectations),
             )
             return model

@@ -550,8 +550,20 @@ class WebRunner:
 
         return issues
 
-    async def scrape_landing_page(self, url: str) -> str:
-        """Scrape visible text from a URL for intent modeling. Returns page text."""
+    async def scrape_landing_page(
+        self, url: str, include_a11y_tree: bool = False,
+    ) -> str | tuple[str, str]:
+        """Scrape visible text from a URL for intent modeling.
+
+        Args:
+            url: The URL to scrape.
+            include_a11y_tree: If True, also returns the accessibility tree.
+
+        Returns:
+            Page text string, or (page_text, a11y_tree) tuple if include_a11y_tree.
+        """
+        from preflight.core.actions import get_accessibility_tree
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
@@ -559,9 +571,15 @@ class WebRunner:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await page.wait_for_timeout(2000)  # Let JS render
                 text = await page.evaluate("() => document.body.innerText")
-                return text[:15000]
+                text = text[:15000]
+                if include_a11y_tree:
+                    a11y_tree = await get_accessibility_tree(page)
+                    return text, a11y_tree
+                return text
             except Exception as e:
                 logger.error("Failed to scrape %s: %s", url, e)
+                if include_a11y_tree:
+                    return f"(Failed to load: {e})", ""
                 return f"(Failed to load: {e})"
             finally:
                 await browser.close()
