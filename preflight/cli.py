@@ -562,5 +562,171 @@ def handoff(run_dir: str, fmt: str, repo: str | None, github_token_env: str, out
         console.print(f"    {path}")
 
 
+@main.command()
+@click.argument("run_dir", default="./artifacts")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
+def feedback(run_dir: str, verbose: bool):
+    """Rate issues from a completed run to improve future evaluations.
+
+    Examples:
+
+        preflight feedback
+
+        preflight feedback ./artifacts
+    """
+    setup_logging(verbose)
+    from preflight.reporting.comparison import load_run_result
+    from preflight.core.memory import ProductMemory, RunFeedback
+
+    try:
+        result = load_run_result(run_dir)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+
+    console.print(f"\n[bold]Preflight Feedback[/bold] — {result.config.target_url}")
+    console.print(f"  Run: {result.run_id} | Issues: {len(result.issues)}")
+    console.print()
+
+    if not result.issues:
+        console.print("[dim]No issues to rate.[/dim]")
+        return
+
+    memory = ProductMemory()
+    mem_data = memory.load(result.config.target_url)
+    mem_data.product_name = result.intent_model.product_name
+
+    useful_ids: list[str] = []
+    fp_ids: list[str] = []
+
+    for i, issue in enumerate(result.issues, 1):
+        color = {
+            "critical": "red", "high": "red", "medium": "yellow",
+            "low": "blue", "info": "dim",
+        }.get(issue.severity.value, "white")
+
+        console.print(f"  [{color}][{issue.severity.value}][/{color}] {issue.title}")
+        if issue.user_impact:
+            console.print(f"    [dim]{issue.user_impact}[/dim]")
+
+        rating = console.input(
+            f"  ({i}/{len(result.issues)}) "
+            "[bold]v[/bold]=valid  [bold]f[/bold]=false positive  "
+            "[bold]s[/bold]=skip  [bold]q[/bold]=quit: "
+        ).strip().lower()
+
+        if rating == "q":
+            break
+        elif rating == "v":
+            memory.record_issue_feedback(
+                mem_data, issue.id, issue.title, "valid",
+            )
+            useful_ids.append(issue.id)
+        elif rating == "f":
+            memory.record_issue_feedback(
+                mem_data, issue.id, issue.title, "false_positive",
+            )
+            fp_ids.append(issue.id)
+        # skip = no feedback recorded
+
+        console.print()
+
+    # Overall rating
+    overall = console.input(
+        "[bold]Overall run quality (1-5, or Enter to skip):[/bold] "
+    ).strip()
+    overall_rating = 0
+    if overall.isdigit() and 1 <= int(overall) <= 5:
+        overall_rating = int(overall)
+
+    comments = console.input(
+        "[bold]Any comments?[/bold] (or Enter to skip): "
+    ).strip()
+
+    run_fb = RunFeedback(
+        run_id=result.run_id,
+        overall_rating=overall_rating,
+        useful_issues=useful_ids,
+        false_positives=fp_ids,
+        comments=comments,
+    )
+    memory.record_run_feedback(mem_data, run_fb)
+    memory.save(mem_data)
+
+    console.print(f"\n[bold green]Feedback saved![/bold green]")
+    console.print(f"  Valid: {len(useful_ids)} | False positives: {len(fp_ids)}")
+    console.print(f"  Known false positives total: {len(mem_data.known_false_positives)}")
+    console.print(f"  Future runs will learn from this feedback.")
+
+
+@main.command()
+@click.argument("action", type=click.Choice(["show", "reset", "list"]))
+@click.option("--url", default=None, help="Product URL (required for show/reset)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
+def memory(action: str, url: str | None, verbose: bool):
+    """View or manage product memory.
+
+    Examples:
+
+        preflight memory list
+
+        preflight memory show --url https://example.com
+
+        preflight memory reset --url https://example.com
+    """
+    setup_logging(verbose)
+    from preflight.core.memory import ProductMemory
+
+    mem = ProductMemory()
+
+    if action == "list":
+        products = mem.list_products()
+        if not products:
+            console.print("[dim]No product memory stored yet.[/dim]")
+            return
+        console.print(f"\n[bold]Stored product memory ({len(products)} products):[/bold]\n")
+        for p in products:
+            console.print(
+                f"  [cyan]{p['url']}[/cyan] — "
+                f"{p['product_name'] or '(unnamed)'} | "
+                f"Runs: {p['run_count']} | "
+                f"False positives: {p['false_positives']}"
+            )
+        console.print()
+
+    elif action == "show":
+        if not url:
+            console.print("[red]--url is required for 'show'[/red]")
+            sys.exit(1)
+        data = mem.load(url)
+        if data.run_count == 0:
+            console.print(f"[dim]No memory for {url}[/dim]")
+            return
+        console.print(f"\n[bold]Memory for {url}[/bold]\n")
+        console.print(f"  Product: {data.product_name}")
+        console.print(f"  Runs: {data.run_count}")
+        console.print(f"  Last run: {data.last_run}")
+        if data.known_false_positives:
+            console.print(f"\n  [bold]Known false positives ({len(data.known_false_positives)}):[/bold]")
+            for fp in data.known_false_positives:
+                console.print(f"    - {fp}")
+        if data.custom_guidance:
+            console.print(f"\n  [bold]Custom guidance:[/bold] {data.custom_guidance}")
+        valid = sum(1 for fb in data.issue_feedback if fb.rating == "valid")
+        fp = sum(1 for fb in data.issue_feedback if fb.rating == "false_positive")
+        if valid + fp > 0:
+            console.print(f"\n  [bold]Feedback stats:[/bold] {valid} valid, {fp} false positives")
+        console.print()
+
+    elif action == "reset":
+        if not url:
+            console.print("[red]--url is required for 'reset'[/red]")
+            sys.exit(1)
+        if mem.reset(url):
+            console.print(f"[green]Memory reset for {url}[/green]")
+        else:
+            console.print(f"[dim]No memory found for {url}[/dim]")
+
+
 if __name__ == "__main__":
     main()
