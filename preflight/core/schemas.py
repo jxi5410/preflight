@@ -123,6 +123,9 @@ class ProductIntentModel(BaseModel):
     trust_sensitive_actions: list[str] = Field(default_factory=list)
     institutional_relevance: InstitutionalRelevance = InstitutionalRelevance.none
     institutional_reasoning: str = ""
+    input_first: bool = False
+    input_type: str = ""  # search, prompt, url, code, data, free_text
+    input_placeholder: str = ""
     assumptions: list[str] = Field(default_factory=list)
     confidence: float = 0.0
     raw_signals: dict[str, Any] = Field(default_factory=dict)
@@ -133,6 +136,14 @@ class ProductIntentModel(BaseModel):
 # ---------------------------------------------------------------------------
 # Agent / Persona
 # ---------------------------------------------------------------------------
+
+class SeedInput(BaseModel):
+    """A contextually appropriate input for a persona to try."""
+    input_text: str
+    purpose: str
+    expected_outcome: str
+    is_edge_case: bool = False
+
 
 class AgentPersona(BaseModel):
     """A dynamically generated user agent."""
@@ -147,6 +158,7 @@ class AgentPersona(BaseModel):
     behavioral_style: str = ""
     device_preference: Platform = Platform.web
     assigned_journeys: list[str] = Field(default_factory=list)
+    seed_inputs: list[SeedInput] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
