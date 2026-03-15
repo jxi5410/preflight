@@ -6,15 +6,21 @@ Mandatory vision-based evaluation for mobile viewports:
 - Text readability at mobile scale
 - Horizontal overflow / scroll issues
 - Navigation adaptation (hamburger menu, etc.)
+
+This lens independently captures screenshots at desktop (1440x900) and mobile
+(390x844) viewports using Playwright, then sends both to the LLM via
+complete_json_with_vision for side-by-side visual comparison.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+
+from playwright.async_api import async_playwright
 
 from preflight.core.llm import LLMClient
 from preflight.core.schemas import (
-    Evidence,
     Issue,
     IssueCategory,
     Platform,
@@ -26,19 +32,26 @@ logger = logging.getLogger(__name__)
 
 RESPONSIVE_SYSTEM_PROMPT = """You are a mobile responsiveness evaluator for Preflight.
 
-You compare desktop and mobile evaluation results to identify responsive design issues.
+You are receiving TWO screenshots of the same page:
+1. Desktop viewport (1440x900)
+2. Mobile viewport (390x844)
+
+IMPORTANT: Base ALL findings on what you literally see in these screenshots.
+Compare the two images side by side to identify responsive design issues.
 
 Focus on:
 1. **Layout breaks**: Content that overflows, overlaps, or becomes unreadable on mobile
-2. **Touch targets**: Buttons/links smaller than 44x44px on mobile
-3. **Text sizing**: Text too small to read on mobile (< 14px effective)
+2. **Touch targets**: Buttons/links that appear too small for finger taps on mobile
+3. **Text sizing**: Text too small to read on mobile
 4. **Navigation**: Desktop nav that doesn't adapt to mobile (no hamburger/drawer)
-5. **Horizontal scroll**: Pages wider than viewport forcing horizontal scroll
+5. **Horizontal scroll**: Content wider than the mobile viewport
 6. **Image scaling**: Images that don't scale down or break layout
 7. **Form usability**: Inputs too small, dropdowns unusable on touch
-8. **Viewport issues**: Content hidden or cut off on smaller screens
+8. **Cut-off content**: Elements clipped or hidden on mobile that are visible on desktop
+9. **Spacing**: Padding/margins that don't adapt between viewports
 
-You MUST cite specific evidence for every finding.
+You MUST cite specific evidence for every finding by referencing what you see
+in the desktop vs mobile screenshots.
 
 Respond with JSON:
 {
@@ -58,85 +71,77 @@ Respond with JSON:
   "summary": "..."
 }"""
 
-RESPONSIVE_EVAL_PROMPT = """Evaluate mobile responsiveness by comparing desktop and mobile findings.
+RESPONSIVE_EVAL_PROMPT = """Evaluate mobile responsiveness by comparing the desktop and mobile screenshots.
 
 ## Product: {product_name} ({product_type})
 ## Target URL: {target_url}
 
-## Desktop Issues (viewport 1440x900)
-{desktop_issues}
+The first image is the DESKTOP screenshot (1440x900 viewport).
+The second image is the MOBILE screenshot (390x844 viewport).
 
-## Mobile Issues (viewport 390x844)
-{mobile_issues}
-
-## Coverage
-{coverage_summary}
-
-Compare desktop vs mobile findings. Identify:
-1. Issues that only appear on mobile (responsive breakage)
-2. Issues worse on mobile than desktop
-3. Missing mobile adaptations (navigation, touch targets)
-4. Mobile-specific UX problems
+Compare them and identify:
+1. Layout elements that break or overflow on mobile
+2. Text that becomes unreadable on mobile
+3. Navigation that doesn't adapt (missing hamburger menu, etc.)
+4. Touch targets that are too small on mobile
+5. Content that is cut off or hidden on mobile
+6. Spacing/padding issues between viewports
 
 Rate overall responsive quality 0.0-1.0."""
 
 
 class ResponsiveLens:
-    """Evaluates mobile responsiveness and visual layout."""
+    """Evaluates mobile responsiveness by capturing and comparing viewport screenshots."""
 
-    def __init__(self, llm: LLMClient):
+    def __init__(self, llm: LLMClient, output_dir: str = "./artifacts"):
         self.llm = llm
+        self.output_dir = Path(output_dir)
 
     async def review(self, result: RunResult) -> tuple[list[Issue], float]:
-        """Review mobile responsiveness by comparing desktop/mobile findings.
+        """Capture desktop and mobile screenshots, then compare via vision LLM.
 
         Returns (issues, responsive_score).
         """
-        # Separate desktop and mobile issues
-        desktop_issues = [
-            i for i in result.issues
-            if i.platform == Platform.web
-        ]
-        mobile_issues = [
-            i for i in result.issues
-            if i.platform == Platform.mobile_web
-        ]
+        target_url = result.config.target_url
 
-        if not mobile_issues and not desktop_issues:
-            return [], 1.0  # No data to compare
-
-        # Format issues for comparison
-        desktop_text = self._format_issues(desktop_issues, "desktop")
-        mobile_text = self._format_issues(mobile_issues, "mobile")
-
-        if not desktop_text and not mobile_text:
-            return [], 1.0
-
-        # Coverage summary
-        mobile_pages = sum(
-            1 for e in result.coverage.entries
-            if "mobile" in e.agent_id.lower()
+        # Capture screenshots at both viewports
+        desktop_bytes = await self._capture_viewport(
+            url=target_url,
+            width=1440,
+            height=900,
+            label="desktop",
         )
-        desktop_pages = len(result.coverage.entries) - mobile_pages
-
-        coverage = (
-            f"Desktop pages: {desktop_pages}, Mobile pages: {mobile_pages}, "
-            f"Total: {len(result.coverage.entries)}"
+        mobile_bytes = await self._capture_viewport(
+            url=target_url,
+            width=390,
+            height=844,
+            label="mobile",
+            mobile_ua=True,
         )
+
+        if not desktop_bytes and not mobile_bytes:
+            logger.warning("Could not capture any screenshots for responsive review")
+            return [], 0.5
+
+        # Build image list for vision
+        images: list[tuple[bytes, str]] = []
+        if desktop_bytes:
+            images.append((desktop_bytes, "image/png"))
+        if mobile_bytes:
+            images.append((mobile_bytes, "image/png"))
 
         prompt = RESPONSIVE_EVAL_PROMPT.format(
             product_name=result.intent_model.product_name,
             product_type=result.intent_model.product_type,
-            target_url=result.config.target_url,
-            desktop_issues=desktop_text or "(no desktop issues)",
-            mobile_issues=mobile_text or "(no mobile issues)",
-            coverage_summary=coverage,
+            target_url=target_url,
         )
 
         try:
-            data = self.llm.complete_json(prompt, system=RESPONSIVE_SYSTEM_PROMPT)
+            data = self.llm.complete_json_with_vision(
+                prompt, images=images, system=RESPONSIVE_SYSTEM_PROMPT,
+            )
         except Exception as e:
-            logger.warning("Responsive lens evaluation failed: %s", e)
+            logger.warning("Responsive lens vision evaluation failed: %s", e)
             return [], 0.5
 
         issues: list[Issue] = []
@@ -166,38 +171,49 @@ class ResponsiveLens:
 
         responsive_score = data.get("responsive_score", 0.5)
 
-        # Flag if no mobile evaluation was done at all
-        if not mobile_issues:
-            issues.append(Issue(
-                title="No mobile viewport evaluation performed",
-                severity=Severity.medium,
-                confidence=0.9,
-                platform=Platform.mobile_web,
-                category=IssueCategory.responsive,
-                agent="responsive_lens",
-                user_impact="Mobile users may encounter untested layout issues",
-                observed_facts=["No mobile viewport (390x844) evaluation was included in this run"],
-                inferred_judgment="Mobile testing should be mandatory for web products",
-                repair_brief="Ensure at least one agent uses mobile_web viewport",
-                likely_product_area="Layout/Responsive",
-            ))
-            responsive_score = min(responsive_score, 0.3)
-
         logger.info(
             "Responsive lens: %d issues, score=%.1f",
             len(issues), responsive_score,
         )
         return issues, responsive_score
 
-    @staticmethod
-    def _format_issues(issues: list[Issue], label: str) -> str:
-        """Format issues for prompt context."""
-        if not issues:
-            return ""
-        lines = []
-        for i in issues[:20]:  # Cap for token budget
-            lines.append(
-                f"- [{i.severity.value}] {i.title} "
-                f"(category={i.category.value}, area={i.likely_product_area})"
-            )
-        return f"### {label.title()} ({len(issues)} issues)\n" + "\n".join(lines)
+    async def _capture_viewport(
+        self,
+        url: str,
+        width: int,
+        height: int,
+        label: str,
+        mobile_ua: bool = False,
+    ) -> bytes | None:
+        """Capture a screenshot at the specified viewport size."""
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+
+                context_kwargs: dict = {"viewport": {"width": width, "height": height}}
+                if mobile_ua:
+                    context_kwargs["user_agent"] = (
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+                        "Mobile/15E148 Safari/604.1"
+                    )
+
+                context = await browser.new_context(**context_kwargs)
+                page = await context.new_page()
+
+                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(2000)  # Let JS render
+
+                screenshot_bytes = await page.screenshot(full_page=True, timeout=10000)
+
+                # Save to disk for reference
+                self.output_dir.mkdir(parents=True, exist_ok=True)
+                out_path = self.output_dir / f"responsive-{label}-{width}x{height}.png"
+                out_path.write_bytes(screenshot_bytes)
+
+                await browser.close()
+                return screenshot_bytes
+
+        except Exception as e:
+            logger.warning("Failed to capture %s viewport (%dx%d): %s", label, width, height, e)
+            return None

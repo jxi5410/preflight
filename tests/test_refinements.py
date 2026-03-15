@@ -611,34 +611,14 @@ class TestResponsiveLens:
     def test_responsive_category_exists(self):
         assert IssueCategory.responsive == "responsive"
 
-    def test_responsive_lens_flags_missing_mobile(self):
-        """Should flag when no mobile evaluation was performed."""
+    def test_responsive_lens_uses_vision_with_screenshots(self):
+        """ResponsiveLens now captures screenshots and uses vision API."""
         from preflight.lenses.responsive_lens import ResponsiveLens
+        from unittest.mock import AsyncMock, patch
+        import tempfile
 
         mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
-            "issues": [],
-            "responsive_score": 0.5,
-            "summary": "No mobile data",
-        }
-        lens = ResponsiveLens(mock_llm)
-
-        result = _make_run_result(issues=[
-            _make_issue("Desktop bug", platform=Platform.web),
-        ])
-
-        import asyncio
-        issues, score = asyncio.get_event_loop().run_until_complete(lens.review(result))
-        # Should have at least the "no mobile viewport" warning
-        mobile_warnings = [i for i in issues if "mobile viewport" in i.title.lower()]
-        assert len(mobile_warnings) >= 1
-        assert score <= 0.3
-
-    def test_responsive_lens_with_mobile_data(self):
-        from preflight.lenses.responsive_lens import ResponsiveLens
-
-        mock_llm = MagicMock()
-        mock_llm.complete_json.return_value = {
+        mock_llm.complete_json_with_vision.return_value = {
             "issues": [
                 {
                     "title": "Touch targets too small",
@@ -650,46 +630,65 @@ class TestResponsiveLens:
                 }
             ],
             "responsive_score": 0.7,
+            "summary": "Some mobile issues.",
         }
-        lens = ResponsiveLens(mock_llm)
-
-        result = _make_run_result(issues=[
-            _make_issue("Mobile bug", platform=Platform.mobile_web),
-        ])
-
-        import asyncio
-        issues, score = asyncio.get_event_loop().run_until_complete(lens.review(result))
-        assert len(issues) >= 1
-        assert any(i.category == IssueCategory.responsive for i in issues)
-        assert score == 0.7
-
-    def test_responsive_lens_handles_llm_failure(self):
-        from preflight.lenses.responsive_lens import ResponsiveLens
-
-        mock_llm = MagicMock()
-        mock_llm.complete_json.side_effect = Exception("LLM error")
-        lens = ResponsiveLens(mock_llm)
-
-        result = _make_run_result(issues=[
-            _make_issue("Bug", platform=Platform.web),
-        ])
-
-        import asyncio
-        issues, score = asyncio.get_event_loop().run_until_complete(lens.review(result))
-        assert issues == []
-        assert score == 0.5
-
-    def test_responsive_empty_issues_returns_1(self):
-        from preflight.lenses.responsive_lens import ResponsiveLens
-
-        mock_llm = MagicMock()
-        lens = ResponsiveLens(mock_llm)
 
         result = _make_run_result(issues=[])
 
-        import asyncio
-        issues, score = asyncio.get_event_loop().run_until_complete(lens.review(result))
-        assert score == 1.0
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lens = ResponsiveLens(mock_llm, output_dir=tmpdir)
+
+            with patch("preflight.lenses.responsive_lens.async_playwright") as mock_pw:
+                mock_browser = AsyncMock()
+                mock_context = AsyncMock()
+                mock_page = AsyncMock()
+
+                mock_pw.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
+                mock_browser.new_context = AsyncMock(return_value=mock_context)
+                mock_context.new_page = AsyncMock(return_value=mock_page)
+                mock_page.goto = AsyncMock()
+                mock_page.wait_for_load_state = AsyncMock()
+                mock_page.wait_for_timeout = AsyncMock()
+                mock_page.screenshot = AsyncMock(return_value=b"\x89PNG fake")
+
+                import asyncio
+                issues, score = asyncio.get_event_loop().run_until_complete(lens.review(result))
+
+                mock_llm.complete_json_with_vision.assert_called_once()
+                assert len(issues) >= 1
+                assert any(i.category == IssueCategory.responsive for i in issues)
+                assert score == 0.7
+
+    def test_responsive_lens_handles_llm_failure(self):
+        from preflight.lenses.responsive_lens import ResponsiveLens
+        from unittest.mock import AsyncMock, patch
+        import tempfile
+
+        mock_llm = MagicMock()
+        mock_llm.complete_json_with_vision.side_effect = Exception("LLM error")
+
+        result = _make_run_result(issues=[])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lens = ResponsiveLens(mock_llm, output_dir=tmpdir)
+
+            with patch("preflight.lenses.responsive_lens.async_playwright") as mock_pw:
+                mock_browser = AsyncMock()
+                mock_context = AsyncMock()
+                mock_page = AsyncMock()
+
+                mock_pw.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
+                mock_browser.new_context = AsyncMock(return_value=mock_context)
+                mock_context.new_page = AsyncMock(return_value=mock_page)
+                mock_page.goto = AsyncMock()
+                mock_page.wait_for_load_state = AsyncMock()
+                mock_page.wait_for_timeout = AsyncMock()
+                mock_page.screenshot = AsyncMock(return_value=b"\x89PNG fake")
+
+                import asyncio
+                issues, score = asyncio.get_event_loop().run_until_complete(lens.review(result))
+                assert issues == []
+                assert score == 0.5
 
 
 # ===========================================================================

@@ -195,7 +195,7 @@ async def run_pipeline(config: RunConfig) -> RunResult:
         return issues, scorecard
 
     async def run_responsive():
-        responsive_lens = ResponsiveLens(llm)
+        responsive_lens = ResponsiveLens(llm, output_dir=config.output_dir)
         return await responsive_lens.review(result)
 
     async def run_auth():
