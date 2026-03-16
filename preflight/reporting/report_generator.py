@@ -193,6 +193,51 @@ class ReportGenerator:
                 lines.append("---")
                 lines.append("")
 
+        # Retention Verdicts
+        if result.retention_verdicts:
+            lines.append("## Retention Verdicts")
+            lines.append("")
+            lines.append("| Persona | Would Use Again | Would Recommend | Sentiment | Primary Reason |")
+            lines.append("|---------|:-:|:-:|-----------|----------------|")
+            for verdict in result.retention_verdicts:
+                # Find persona name
+                persona_name = verdict.persona_id
+                for agent in result.agents:
+                    if agent.id == verdict.persona_id:
+                        persona_name = agent.name
+                        break
+                use_again = "Yes" if verdict.would_use_again else "No"
+                recommend = "Yes" if verdict.would_recommend else "No"
+                lines.append(
+                    f"| {persona_name} | {use_again} | {recommend} | "
+                    f"{verdict.overall_sentiment} | {verdict.primary_reason[:80]} |"
+                )
+            lines.append("")
+
+            for verdict in result.retention_verdicts:
+                persona_name = verdict.persona_id
+                for agent in result.agents:
+                    if agent.id == verdict.persona_id:
+                        persona_name = agent.name
+                        break
+                lines.append(f"### {persona_name}")
+                lines.append("")
+                lines.append(f"> {verdict.persona_closing_thought}")
+                lines.append("")
+                if verdict.dealbreakers:
+                    lines.append("**Dealbreakers:**")
+                    for d in verdict.dealbreakers:
+                        lines.append(f"- {d}")
+                    lines.append("")
+                if verdict.delighters:
+                    lines.append("**Delighters:**")
+                    for d in verdict.delighters:
+                        lines.append(f"- {d}")
+                    lines.append("")
+                if verdict.comparison_note:
+                    lines.append(f"**Comparison:** {verdict.comparison_note}")
+                    lines.append("")
+
         # Institutional readiness (if applicable)
         inst_issues = [i for i in issues if i.category.value == "institutional_trust"]
         if inst_issues or result.scores.get("institutional_readiness") is not None:

@@ -26,6 +26,7 @@ from preflight.core.schemas import (
     PageSnapshot,
     Platform,
     ProductIntentModel,
+    RetentionVerdict,
     RunConfig,
     RunResult,
     Severity,
@@ -118,6 +119,48 @@ COMPARATIVE_PROMPT = """Compare findings across personas. Identify convergence a
 
 Analyze cross-persona patterns. What did multiple personas agree on? What did only specific
 persona types catch?"""
+
+RETENTION_SYSTEM_PROMPT = """You are simulating a real user's final verdict after using a product.
+
+Based on the full experience — first impression, journey walkthrough, emotional state changes,
+and any abandonment events — determine whether this persona would return to this product.
+
+Respond with JSON:
+{
+  "would_use_again": true/false,
+  "would_recommend": true/false,
+  "confidence_in_verdict": 0.0-1.0,
+  "primary_reason": "One sentence explaining the main reason",
+  "dealbreakers": ["list of things that would prevent return"],
+  "delighters": ["list of things that would bring them back"],
+  "comparison_note": "Compared to [product], this is..." or null,
+  "overall_sentiment": "positive" | "neutral" | "negative" | "mixed",
+  "persona_closing_thought": "First person closing thought..."
+}"""
+
+RETENTION_PROMPT = """You are {persona_name}, a {persona_role}.
+
+## Your Experience Summary
+
+### First Impression
+{first_impression}
+
+### Journey Think-Aloud Transcript
+{think_aloud_transcript}
+
+### Emotional Timeline
+{emotional_timeline}
+
+### Abandonment Events
+{abandonment_events}
+
+### Your Profile
+- Expertise: {expertise_level}
+- Goals: {persona_goals}
+- You compare products to: {comparison_anchors}
+
+Now give your final verdict: would you come back to this product? Would you recommend it?
+Be honest and specific. Speak in first person as {persona_name}."""
 
 JOURNEY_ASSIGNMENT_PROMPT = """You are the test planner for Preflight.
 
@@ -321,6 +364,11 @@ class Orchestrator:
         result.issue_groups = issue_groups
         result.coverage = coverage
         result.scores.update(perf_scores)
+
+        # Step 11: Retention verdicts — would each persona come back?
+        retention_verdicts = await self._evaluate_retention(agents, result)
+        result.retention_verdicts = retention_verdicts
+
         result.completed_at = datetime.now(tz=__import__("datetime").timezone.utc)
 
         return result
@@ -478,6 +526,92 @@ class Orchestrator:
         )
 
         return comparative_issues
+
+    async def _evaluate_retention(
+        self,
+        agents: list[AgentPersona],
+        result: RunResult,
+    ) -> list[RetentionVerdict]:
+        """Generate retention verdicts for each persona."""
+        verdicts: list[RetentionVerdict] = []
+
+        # Build first-impression lookup
+        fi_map = {fi.persona_id: fi for fi in result.first_impressions}
+
+        for agent in agents:
+            # Build think-aloud transcript
+            transcript_parts = []
+            for step in agent.journey_steps:
+                if step.think_aloud:
+                    transcript_parts.append(f"Step {step.step_number}: {step.think_aloud}")
+            transcript = "\n".join(transcript_parts) if transcript_parts else "(no transcript)"
+
+            # Build emotional timeline
+            timeline_parts = []
+            for event in agent.emotional_timeline:
+                timeline_parts.append(
+                    f"Step {event.step_index}: {event.dimension} "
+                    f"{event.old_value:.2f} → {event.new_value:.2f} ({event.trigger[:60]})"
+                )
+            timeline = "\n".join(timeline_parts) if timeline_parts else "(no emotional changes)"
+
+            # Build first impression text
+            fi = fi_map.get(agent.id)
+            fi_text = (
+                f"Clarity: {fi.clarity_score}/10 — {fi.clarity_explanation}\n"
+                f"Gut reaction: {fi.gut_reaction}\n"
+                f"Would continue: {fi.would_continue}"
+            ) if fi else "(no first impression recorded)"
+
+            # Build abandonment events
+            abandonment_text = "\n".join(
+                f"Step {ae.step_index}: {ae.reason} — {ae.persona_thought}"
+                for ae in agent.abandonment_events
+            ) if agent.abandonment_events else "(no abandonment events)"
+
+            cb = agent.cognitive_behavior
+            prompt = RETENTION_PROMPT.format(
+                persona_name=agent.name,
+                persona_role=agent.role,
+                first_impression=fi_text,
+                think_aloud_transcript=transcript[:3000],
+                emotional_timeline=timeline,
+                abandonment_events=abandonment_text,
+                expertise_level=agent.expertise_level,
+                persona_goals=", ".join(agent.goals),
+                comparison_anchors=", ".join(cb.comparison_anchors) if cb.comparison_anchors else "(none)",
+            )
+
+            try:
+                data = self.llm.complete_json(prompt, system=RETENTION_SYSTEM_PROMPT, tier="fast")
+                verdict = RetentionVerdict(
+                    persona_id=agent.id,
+                    would_use_again=data.get("would_use_again", False),
+                    would_recommend=data.get("would_recommend", False),
+                    confidence_in_verdict=max(0.0, min(1.0, float(data.get("confidence_in_verdict", 0.5)))),
+                    primary_reason=data.get("primary_reason", ""),
+                    dealbreakers=data.get("dealbreakers", []),
+                    delighters=data.get("delighters", []),
+                    comparison_note=data.get("comparison_note"),
+                    overall_sentiment=data.get("overall_sentiment", "neutral"),
+                    persona_closing_thought=data.get("persona_closing_thought", ""),
+                )
+                verdicts.append(verdict)
+            except Exception as e:
+                logger.warning("Retention verdict failed for %s: %s", agent.name, e)
+                verdicts.append(RetentionVerdict(
+                    persona_id=agent.id,
+                    would_use_again=False,
+                    would_recommend=False,
+                    confidence_in_verdict=0.0,
+                    primary_reason="Retention evaluation failed",
+                    overall_sentiment="neutral",
+                    persona_closing_thought="Unable to evaluate.",
+                ))
+
+        logger.info("Retention verdicts: %d/%d would use again",
+                    sum(1 for v in verdicts if v.would_use_again), len(verdicts))
+        return verdicts
 
     async def _capture_landing_snapshot(self, config: RunConfig) -> PageSnapshot | None:
         """Capture a snapshot of the landing page for first-impression evaluation."""

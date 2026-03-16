@@ -475,6 +475,20 @@ class Handoff(BaseModel):
     summary: str = ""
 
 
+class RetentionVerdict(BaseModel):
+    """A persona's verdict on whether they would return to this product."""
+    persona_id: str
+    would_use_again: bool
+    would_recommend: bool
+    confidence_in_verdict: float = Field(ge=0.0, le=1.0)
+    primary_reason: str  # One sentence: why yes or why no
+    dealbreakers: list[str] = Field(default_factory=list)
+    delighters: list[str] = Field(default_factory=list)
+    comparison_note: str | None = None  # "Compared to Notion, this is..."
+    overall_sentiment: str  # "positive", "neutral", "negative", "mixed"
+    persona_closing_thought: str  # First person: "Overall, I think this product..."
+
+
 class RunResult(BaseModel):
     """Complete output of a single evaluation run."""
     run_id: str = Field(default_factory=lambda: f"run-{uuid.uuid4().hex[:8]}")
@@ -489,3 +503,4 @@ class RunResult(BaseModel):
     summary: str = ""
     scores: dict[str, float] = Field(default_factory=dict)
     first_impressions: list[FirstImpressionResult] = Field(default_factory=list)
+    retention_verdicts: list[RetentionVerdict] = Field(default_factory=list)
