@@ -199,6 +199,30 @@ class AgentPersona(BaseModel):
     cognitive_behavior: CognitiveBehavior = Field(default_factory=CognitiveBehavior)
     emotional_state: EmotionalState = Field(default_factory=EmotionalState)
     emotional_timeline: list[EmotionalEvent] = Field(default_factory=list)
+    abandonment_events: list[AbandonmentEvent] = Field(default_factory=list)
+    exploration_detours: list[ExplorationDetour] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Abandonment and Exploration
+# ---------------------------------------------------------------------------
+
+class AbandonmentEvent(BaseModel):
+    """Records when a persona abandons a journey."""
+    step_index: int
+    reason: str  # "frustrated", "lost", "bored", "confused"
+    persona_thought: str  # First-person: "I have no idea what to do next, I'm leaving"
+    emotional_state_at_abandonment: EmotionalState
+    last_action: str
+    screenshot_path: str | None = None
+
+
+class ExplorationDetour(BaseModel):
+    """Records when a persona deviates from the assigned journey path."""
+    step_index: int
+    detour_target: str  # What they clicked instead
+    reason: str  # Why: "I noticed a 'Pricing' link and I want to check it before continuing"
+    returned_to_journey: bool = False
 
 
 # ---------------------------------------------------------------------------

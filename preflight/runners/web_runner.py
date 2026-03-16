@@ -23,11 +23,14 @@ from preflight.core.actions import (
 )
 from preflight.core.llm import LLMClient
 from preflight.core.schemas import (
+    AbandonmentEvent,
     Action,
     AgentPersona,
     CoverageEntry,
     CoverageMap,
+    EmotionalState,
     Evidence,
+    ExplorationDetour,
     Issue,
     IssueCategory,
     JourneyStep,
@@ -546,6 +549,61 @@ class WebRunner:
             logger.error("Seed input evaluation failed: %s", e)
             return []
 
+    @staticmethod
+    def _check_abandonment(persona: AgentPersona, step_num: int, last_action: str, screenshot_path: str | None = None) -> AbandonmentEvent | None:
+        """Check if the persona should abandon the journey based on emotional state."""
+        state = persona.emotional_state
+        cb = persona.cognitive_behavior
+        confusing_steps = sum(1 for e in persona.emotional_timeline if e.dimension == "frustration" and e.new_value > e.old_value)
+
+        if state.frustration > 0.8 and confusing_steps >= cb.patience_threshold:
+            return AbandonmentEvent(
+                step_index=step_num,
+                reason="frustrated",
+                persona_thought="I've had enough. Nothing is working the way I expect and I'm done trying.",
+                emotional_state_at_abandonment=state.model_copy(),
+                last_action=last_action,
+                screenshot_path=screenshot_path,
+            )
+        if state.engagement < 0.2:
+            return AbandonmentEvent(
+                step_index=step_num,
+                reason="bored",
+                persona_thought="I've lost interest. This doesn't seem worth my time anymore.",
+                emotional_state_at_abandonment=state.model_copy(),
+                last_action=last_action,
+                screenshot_path=screenshot_path,
+            )
+        if state.confidence < 0.2:
+            return AbandonmentEvent(
+                step_index=step_num,
+                reason="lost",
+                persona_thought="I have no idea what to do next. I feel completely lost.",
+                emotional_state_at_abandonment=state.model_copy(),
+                last_action=last_action,
+                screenshot_path=screenshot_path,
+            )
+        return None
+
+    @staticmethod
+    def _get_attention_instruction(persona: AgentPersona) -> str:
+        """Get attention-simulation instructions based on cognitive behavior."""
+        span = persona.cognitive_behavior.attention_span
+        if span == "scanner":
+            return "You only look at headlines, buttons, and images — skip body text entirely."
+        elif span == "reader":
+            return "You read everything carefully, including body text, labels, and fine print."
+        else:  # skimmer
+            return "You read the first sentence of each section and scan headings."
+
+    @staticmethod
+    def _should_detour(persona: AgentPersona) -> bool:
+        """Determine if a curious persona should deviate from the journey path."""
+        import random
+        if persona.cognitive_behavior.exploration_style == "curious":
+            return random.random() < 0.3  # 30% chance
+        return False
+
     async def _execute_journey(
         self,
         page: Page,
@@ -563,6 +621,35 @@ class WebRunner:
         previous_actions: list[str] = [f"Navigated to {config.target_url}"]
 
         for step_num in range(1, max_steps + 1):
+            # CHECK ABANDONMENT before each step
+            abandonment = self._check_abandonment(
+                persona, step_num,
+                previous_actions[-1] if previous_actions else "none",
+                None,
+            )
+            if abandonment:
+                persona.abandonment_events.append(abandonment)
+                issues.append(Issue(
+                    title=f"Persona abandoned journey: {abandonment.reason}",
+                    severity=Severity.high,
+                    confidence=0.9,
+                    platform=Platform.web if persona.device_preference != Platform.mobile_web else Platform.mobile_web,
+                    category=IssueCategory.ux,
+                    agent=persona.id,
+                    user_impact=f"User gave up at step {step_num}: {abandonment.persona_thought}",
+                    observed_facts=[
+                        f"Frustration: {persona.emotional_state.frustration:.2f}",
+                        f"Confidence: {persona.emotional_state.confidence:.2f}",
+                        f"Engagement: {persona.emotional_state.engagement:.2f}",
+                        f"Last action: {abandonment.last_action}",
+                    ],
+                    likely_product_area="User Flow",
+                    repair_brief="Investigate why users abandon at this point in the journey",
+                ))
+                logger.info("  Agent %s abandoned journey '%s' at step %d: %s",
+                           persona.name, journey, step_num, abandonment.reason)
+                break
+
             # 1. CAPTURE: Take a snapshot of the current page
             snapshot = await capture_snapshot(
                 page=page,
@@ -609,6 +696,16 @@ class WebRunner:
                     confidence_level=plan.get("confidence_level", 0.5),
                 ))
                 break
+
+            # CHECK NON-LINEAR EXPLORATION for curious personas
+            if self._should_detour(persona) and actions:
+                detour = ExplorationDetour(
+                    step_index=step_num,
+                    detour_target=actions[0].get("target", "unknown") if isinstance(actions[0], dict) else "unknown",
+                    reason="I noticed something interesting and want to explore it before continuing",
+                )
+                persona.exploration_detours.append(detour)
+                logger.info("  Agent %s taking detour at step %d", persona.name, step_num)
 
             # 3. EXECUTE each planned action
             for action_data in actions:
