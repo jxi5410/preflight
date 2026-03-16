@@ -543,6 +543,8 @@ class WebRunner:
             seed_input=seed_input.input_text or "(empty input)",
         )
 
+        cb = persona.cognitive_behavior
+        es = persona.emotional_state
         prompt = EVALUATION_PROMPT_TEMPLATE.format(
             persona_name=persona.name,
             persona_role=persona.role,
@@ -550,6 +552,15 @@ class WebRunner:
             patience_level=persona.patience_level,
             expertise_level=persona.expertise_level,
             behavioral_style=persona.behavioral_style or "standard",
+            attention_span=cb.attention_span,
+            patience_threshold=cb.patience_threshold,
+            exploration_style=cb.exploration_style,
+            jargon_comfort=cb.jargon_comfort,
+            comparison_anchors=", ".join(cb.comparison_anchors) if cb.comparison_anchors else "(none)",
+            confidence=f"{es.confidence:.2f}",
+            frustration=f"{es.frustration:.2f}",
+            trust_level=f"{es.trust:.2f}",
+            attention_instruction=self._get_attention_instruction(persona),
             journey="seed input evaluation",
             step_number=step_number,
             max_steps=len(persona.seed_inputs) + 1,

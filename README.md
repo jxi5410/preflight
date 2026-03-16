@@ -216,11 +216,12 @@ preflight/
 │   ├── mobile_runner.py     # Mobile web emulation / Maestro native app testing
 │   └── page_snapshot.py     # Page state capture (a11y tree, screenshots, metrics)
 ├── lenses/
-│   ├── design_lens.py       # Design/UI quality review
-│   ├── trust_lens.py        # Trust signal detection
-│   ├── auth_lens.py         # Login/auth flow evaluation (no credentials needed)
-│   ├── responsive_lens.py   # Mobile responsiveness & layout comparison
-│   └── institutional_lens.py # Governance/provenance/auditability review
+│   ├── design_lens.py           # Design/UI quality review
+│   ├── trust_lens.py            # Trust signal detection
+│   ├── auth_lens.py             # Login/auth flow evaluation (no credentials needed)
+│   ├── responsive_lens.py       # Mobile responsiveness & layout comparison
+│   ├── first_impression_lens.py # First 10 seconds evaluation per persona
+│   └── institutional_lens.py    # Governance/provenance/auditability review
 ├── reporting/
 │   ├── report_generator.py  # Markdown, JSON, interactive HTML reports
 │   ├── handoff.py           # Developer handoff (HANDOFF.md + handoff.json)
@@ -260,6 +261,34 @@ Scrape landing page ──► Build intent model ──► Generate personas (ma
                                       report.md    handoff.json
                                       report.json
 ```
+
+## Human-Like Evaluation (v0.2.0)
+
+Preflight doesn't just test — it simulates **being a real human user**. Every persona has emotions, cognitive habits, and honest opinions.
+
+### Emotional State Modeling
+Each persona tracks confidence, frustration, trust, engagement, and delight throughout their session. Emotions change gradually based on what happens — a confusing error message increases frustration, a fast page load sparks delight.
+
+### Cognitive Behavior Profiles
+Personas have realistic cognitive profiles: attention span (scanner/skimmer/reader), exploration style (linear/curious/goal-driven), error tolerance, jargon comfort, and comparison anchors (products they'll mentally compare against).
+
+### First-Impression Evaluation
+Before any journey begins, each persona evaluates the landing page as if they just arrived: clarity, trust signals, call-to-action, relevance, and an honest gut reaction. "I landed on this page and my first thought was..."
+
+### Think-Aloud Narration
+During every step, personas narrate their thoughts like a usability study participant: "Okay, I see a big search bar. I'll try typing... results loaded fast, but I'm not sure what these numbers mean."
+
+### Abandonment Modeling
+Personas can give up. If frustration exceeds their patience threshold, confidence drops too low, or engagement fades — they abandon the flow. "Your first-time user gave up at step 3" is more valuable than "button color is wrong."
+
+### Non-Linear Exploration
+Curious personas have a 30% chance of deviating from the prescribed journey when something catches their eye: "I noticed a Pricing link and want to check it before continuing."
+
+### Retention Verdicts
+After all journeys, each persona delivers a final verdict: would they use the product again? Would they recommend it? With dealbreakers, delighters, and comparison notes.
+
+### Intent-vs-Reality Gap Detection
+Cross-references what the product claims (README, marketing copy, docs) against what personas actually experienced. Flags gaps like "Claims one-click export, but export required 4 steps."
 
 ## Key Features
 
