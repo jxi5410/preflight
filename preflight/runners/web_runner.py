@@ -111,6 +111,21 @@ Goals: {persona_goals}
 Patience: {patience_level} | Expertise: {expertise_level}
 Style: {behavioral_style}
 
+## Cognitive Profile
+- Attention: {attention_span}
+- Patience: {patience_threshold} confusing steps before you consider leaving
+- Exploration: {exploration_style}
+- Jargon comfort: {jargon_comfort}
+- You compare products to: {comparison_anchors}
+
+## Current Emotional State
+- Confidence: {confidence}
+- Frustration: {frustration}
+- Trust: {trust_level}
+
+## Attention Instructions
+{attention_instruction}
+
 ## Journey: {journey}
 ## Step {step_number} of max {max_steps}
 
@@ -123,8 +138,18 @@ Style: {behavioral_style}
 ## Previous Actions
 {previous_actions}
 
-Evaluate this page from your persona's perspective. The screenshot is attached as an image.
-Find issues with specific evidence. Respond with JSON."""
+Look at this screenshot and narrate your thoughts out loud, as if you're in a usability study.
+Be specific about what you see, what you're confused by, what you'd click, and why.
+Speak in first person. Be honest — if something is confusing, say so. If something delights you, say that too.
+
+After your narration, update your emotional state values based on what just happened.
+
+Respond with JSON including:
+- "think_aloud": Your stream-of-consciousness narration in first person
+- "emotional_update": {{"confidence": 0.0-1.0, "frustration": 0.0-1.0, "trust": 0.0-1.0, "engagement": 0.0-1.0, "delight": 0.0-1.0}}
+- "issues": [...] (as before, with evidence)
+- "persona_reaction": "..."
+- "confidence_level": 0.0-1.0"""
 
 INPUT_FIRST_EVALUATION_ADDENDUM = """
 This product requires user input to function. You typed: "{seed_input}"
@@ -550,6 +575,35 @@ class WebRunner:
             return []
 
     @staticmethod
+    def _apply_emotional_update(persona: AgentPersona, data: dict, step_number: int) -> None:
+        """Update persona's emotional state from LLM response."""
+        from preflight.core.schemas import EmotionalEvent
+
+        update = data.get("emotional_update", {})
+        if not isinstance(update, dict):
+            return
+
+        state = persona.emotional_state
+        for dimension in ("confidence", "frustration", "trust", "engagement", "delight"):
+            new_val = update.get(dimension)
+            if new_val is not None:
+                try:
+                    new_val = max(0.0, min(1.0, float(new_val)))
+                except (TypeError, ValueError):
+                    continue
+                old_val = getattr(state, dimension)
+                if abs(new_val - old_val) > 0.05:  # Only record meaningful changes
+                    persona.emotional_timeline.append(EmotionalEvent(
+                        step_index=step_number,
+                        trigger=data.get("think_aloud", "")[:100],
+                        dimension=dimension,
+                        old_value=old_val,
+                        new_value=new_val,
+                        persona_thought=data.get("think_aloud", "")[:200],
+                    ))
+                    setattr(state, dimension, new_val)
+
+    @staticmethod
     def _check_abandonment(persona: AgentPersona, step_num: int, last_action: str, screenshot_path: str | None = None) -> AbandonmentEvent | None:
         """Check if the persona should abandon the journey based on emotional state."""
         state = persona.emotional_state
@@ -685,7 +739,8 @@ class WebRunner:
                     previous_actions=previous_actions,
                 )
                 issues.extend(step_issues)
-                steps.append(JourneyStep(
+                think_aloud = getattr(self, "_last_think_aloud", "")
+                step = JourneyStep(
                     step_number=step_num,
                     action=Action(type="screenshot", reason="Final evaluation"),
                     snapshot_before=None,
@@ -694,7 +749,10 @@ class WebRunner:
                     issues_found=[i.id for i in step_issues],
                     persona_reaction=plan.get("persona_reaction", ""),
                     confidence_level=plan.get("confidence_level", 0.5),
-                ))
+                    think_aloud=think_aloud,
+                )
+                steps.append(step)
+                persona.journey_steps.append(step)
                 break
 
             # CHECK NON-LINEAR EXPLORATION for curious personas
@@ -747,7 +805,8 @@ class WebRunner:
                 )
                 issues.extend(step_issues)
 
-                steps.append(JourneyStep(
+                think_aloud = getattr(self, "_last_think_aloud", "")
+                step = JourneyStep(
                     step_number=step_num,
                     action=action,
                     snapshot_before=snapshot_before,
@@ -756,7 +815,10 @@ class WebRunner:
                     issues_found=[i.id for i in step_issues],
                     persona_reaction=plan.get("persona_reaction", ""),
                     confidence_level=plan.get("confidence_level", 0.5),
-                ))
+                    think_aloud=think_aloud,
+                )
+                steps.append(step)
+                persona.journey_steps.append(step)
 
         return issues, steps
 
@@ -812,6 +874,8 @@ class WebRunner:
     ) -> list[Issue]:
         """Evaluate a page snapshot from the persona's perspective using vision."""
         page_context = snapshot_to_prompt_context(snapshot)
+        cb = persona.cognitive_behavior
+        es = persona.emotional_state
 
         prompt = EVALUATION_PROMPT_TEMPLATE.format(
             persona_name=persona.name,
@@ -820,6 +884,15 @@ class WebRunner:
             patience_level=persona.patience_level,
             expertise_level=persona.expertise_level,
             behavioral_style=persona.behavioral_style or "standard",
+            attention_span=cb.attention_span,
+            patience_threshold=cb.patience_threshold,
+            exploration_style=cb.exploration_style,
+            jargon_comfort=cb.jargon_comfort,
+            comparison_anchors=", ".join(cb.comparison_anchors) if cb.comparison_anchors else "(none)",
+            confidence=f"{es.confidence:.2f}",
+            frustration=f"{es.frustration:.2f}",
+            trust_level=f"{es.trust:.2f}",
+            attention_instruction=self._get_attention_instruction(persona),
             journey=journey,
             step_number=step_number,
             max_steps=max_steps,
@@ -845,11 +918,23 @@ class WebRunner:
             else:
                 data = self.llm.complete_json(prompt, system=system)
 
-            return self._parse_issues(
+            # Extract think-aloud narration
+            think_aloud = data.get("think_aloud", "")
+
+            # Update emotional state from LLM response
+            self._apply_emotional_update(persona, data, step_number)
+
+            issues = self._parse_issues(
                 data, persona, snapshot, step_number,
             )
+
+            # Store think_aloud in a temporary attribute for the caller to pick up
+            self._last_think_aloud = think_aloud
+
+            return issues
         except Exception as e:
             logger.error("Page evaluation failed: %s", e)
+            self._last_think_aloud = ""
             return []
 
     def _parse_issues(

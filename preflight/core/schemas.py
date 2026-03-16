@@ -201,6 +201,7 @@ class AgentPersona(BaseModel):
     emotional_timeline: list[EmotionalEvent] = Field(default_factory=list)
     abandonment_events: list[AbandonmentEvent] = Field(default_factory=list)
     exploration_detours: list[ExplorationDetour] = Field(default_factory=list)
+    journey_steps: list[JourneyStep] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +292,7 @@ class JourneyStep(BaseModel):
     issues_found: list[str] = Field(default_factory=list)  # Issue IDs
     persona_reaction: str = ""
     confidence_level: float = 0.5
+    think_aloud: str = ""  # Natural-language stream of consciousness from the persona's perspective
 
 
 # ---------------------------------------------------------------------------

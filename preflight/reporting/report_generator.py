@@ -155,6 +155,44 @@ class ReportGenerator:
                 lines.append("---")
                 lines.append("")
 
+        # Think-Aloud Transcripts
+        has_think_aloud = any(
+            step.think_aloud
+            for agent in result.agents
+            for step in agent.journey_steps
+        )
+        if has_think_aloud:
+            lines.append("## Think-Aloud Transcripts")
+            lines.append("")
+            for agent in result.agents:
+                agent_steps = [s for s in agent.journey_steps if s.think_aloud]
+                if not agent_steps:
+                    continue
+                lines.append(f"### {agent.name} ({agent.persona_type})")
+                lines.append("")
+                for step in agent_steps:
+                    lines.append(f"**Step {step.step_number}** — {step.action.type}: {step.action.target}")
+                    lines.append(f"> {step.think_aloud}")
+                    lines.append("")
+                    if step.screenshot_path:
+                        lines.append(f"![step-{step.step_number}]({step.screenshot_path})")
+                        lines.append("")
+
+                # Show emotional timeline
+                if agent.emotional_timeline:
+                    lines.append("**Emotional Timeline:**")
+                    lines.append("")
+                    for event in agent.emotional_timeline:
+                        lines.append(
+                            f"- Step {event.step_index}: {event.dimension} "
+                            f"{event.old_value:.2f} → {event.new_value:.2f} "
+                            f"({event.trigger[:60]})"
+                        )
+                    lines.append("")
+
+                lines.append("---")
+                lines.append("")
+
         # Institutional readiness (if applicable)
         inst_issues = [i for i in issues if i.category.value == "institutional_trust"]
         if inst_issues or result.scores.get("institutional_readiness") is not None:
