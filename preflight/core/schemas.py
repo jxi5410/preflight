@@ -157,6 +157,20 @@ class EmotionalEvent(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Cognitive Behavior
+# ---------------------------------------------------------------------------
+
+class CognitiveBehavior(BaseModel):
+    """How this persona thinks and behaves when using a product."""
+    attention_span: str = Field(default="skimmer", description="'scanner' (reads headlines only), 'skimmer' (reads first lines), 'reader' (reads everything)")
+    patience_threshold: int = Field(default=3, description="How many confusing/failed steps before the persona considers abandoning")
+    exploration_style: str = Field(default="linear", description="'linear' (follows obvious path), 'curious' (clicks around), 'goal-driven' (goes straight for target)")
+    error_tolerance: str = Field(default="medium", description="'low' (one error and they're suspicious), 'medium' (a couple errors are ok), 'high' (keeps trying)")
+    jargon_comfort: str = Field(default="some", description="'none' (confused by technical terms), 'some' (knows basics), 'fluent' (expects precision)")
+    comparison_anchors: list[str] = Field(default_factory=list, description="Products this persona has used before and will compare against, e.g. ['Notion', 'Slack']")
+
+
+# ---------------------------------------------------------------------------
 # Agent / Persona
 # ---------------------------------------------------------------------------
 
@@ -182,6 +196,7 @@ class AgentPersona(BaseModel):
     device_preference: Platform = Platform.web
     assigned_journeys: list[str] = Field(default_factory=list)
     seed_inputs: list[SeedInput] = Field(default_factory=list)
+    cognitive_behavior: CognitiveBehavior = Field(default_factory=CognitiveBehavior)
     emotional_state: EmotionalState = Field(default_factory=EmotionalState)
     emotional_timeline: list[EmotionalEvent] = Field(default_factory=list)
 

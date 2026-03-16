@@ -11,6 +11,7 @@ import logging
 from preflight.core.llm import LLMClient
 from preflight.core.schemas import (
     AgentPersona,
+    CognitiveBehavior,
     EmotionalState,
     Platform,
     ProductIntentModel,
@@ -62,6 +63,19 @@ For each persona, provide:
 - expertise_level: "novice" | "intermediate" | "expert"
 - behavioral_style: Brief description of how they interact
 - device_preference: "web" | "mobile_web" | "mobile_app"
+- cognitive_behavior: An object with:
+  - attention_span: "scanner" | "skimmer" | "reader"
+  - patience_threshold: integer (1-10), how many confusing steps before abandoning
+  - exploration_style: "linear" | "curious" | "goal-driven"
+  - error_tolerance: "low" | "medium" | "high"
+  - jargon_comfort: "none" | "some" | "fluent"
+  - comparison_anchors: list of 2-3 product names this persona would compare against
+
+Cognitive behavior guidelines:
+- A first-time non-technical user: scanner attention, linear exploration, low error tolerance, no jargon comfort
+- A developer evaluating a tool: skimmer attention, curious exploration, medium error tolerance, fluent jargon
+- A busy executive: scanner attention, goal-driven exploration, low patience, some jargon comfort
+- Include 2-3 comparison anchors — products this persona would naturally compare against based on the product category
 
 Respond with a JSON array of persona objects."""
 
@@ -169,6 +183,12 @@ class PersonaGenerator:
                     "mobile_app": Platform.mobile_app,
                 }
                 item["device_preference"] = dp_map.get(dp, Platform.web)
+
+                # Parse cognitive_behavior if provided by LLM
+                cb_raw = item.pop("cognitive_behavior", None)
+                if isinstance(cb_raw, dict):
+                    item["cognitive_behavior"] = CognitiveBehavior(**cb_raw)
+
                 personas.append(AgentPersona(**item))
 
             # Guarantee at least one mobile_web persona
